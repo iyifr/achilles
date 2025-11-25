@@ -303,9 +303,10 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 	filePath = u.Path
 
 	idx, err := vectr_svc.ReadIndex(filePath)
+	defer idx.Free()
 
 	if err != nil {
-		return nil, fmt.Errorf("could not vector index after specfied file path")
+		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - could not vector index after specfied file path: %v", err)
 	}
 
 	distances, ids, err := idx.Search(query.QueryEmbedding, 1, int(query.TopK))
