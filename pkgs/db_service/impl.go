@@ -89,8 +89,6 @@ func (s *GDBService) DeleteDB(name string) error {
 
 func (s *GDBService) CreateCollection(collection_name string) error {
 	kv := s.KvService
-
-	// Pass in the kv service to init tables (to avoid one-off failures)
 	err := InitTablesHelper(kv)
 	if err != nil {
 		return err
@@ -102,12 +100,11 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 
 	collectionId := primitive.NewObjectID()
 	collectionTableUri := fmt.Sprintf("table:collection-%s-%s", collectionId.Hex(), s.Name)
+	collectionKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
 
 	catalogEntry := CollectionCatalogEntry{
-		Id: collectionId,
-		// Namespace: parent db of the collection.collection name (db.finance_tenant)
-		Ns: fmt.Sprintf("%s.%s", s.Name, collection_name),
-		// The wiredtiger table where the collection's document
+		Id:             collectionId,
+		Ns:             collectionKey,
 		TableUri:       collectionTableUri,
 		VectorIndexUri: fmt.Sprintf("%s%s", collection_name, ".index"),
 		CreatedAt:      primitive.NewDateTimeFromTime(time.Now()),
@@ -116,17 +113,18 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 
 	err = s.KvService.CreateTable(collectionTableUri, "key_format=u,value_format=u")
 	if err != nil {
-		fmt.Printf("[GDBSERVICE:CreateCollection:Goroutine] Failed to create table %s: %v\n", collectionTableUri, err)
-		return fmt.Errorf("[GDBSERVICE:CreateCollection:Goroutine] Failed to create table %s: %v", collectionTableUri, err)
+		return fmt.Errorf("[GDBSERVICE:CreateCollection] failed to create table %s: %v", collectionTableUri, err)
 	}
 
 	doc, err := bson.Marshal(catalogEntry)
-
 	if err != nil {
-		return fmt.Errorf("[GDBSERVICE:CreateCollection]: Failed to encode catalog entry")
+		return fmt.Errorf("[GDBSERVICE:CreateCollection] failed to encode catalog entry: %v", err)
 	}
 
-	err = kv.PutBinaryWithStringKey(CATALOG, fmt.Sprintf("%s.%s", s.Name, collection_name), doc)
+	err = kv.PutBinaryWithStringKey(CATALOG, collectionKey, doc)
+	if err != nil {
+		return fmt.Errorf("[GDBSERVICE:CreateCollection] failed to write catalog entry: %v", err)
+	}
 
 	// STATS
 	// Create entry in hot stats table
@@ -135,22 +133,23 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 		Vector_Index_Size: 0,
 	}
 
-	stats_doc, _ := bson.Marshal(statsEntry)
-
+	stats_doc, err := bson.Marshal(statsEntry)
 	if err != nil {
-		return fmt.Errorf("[GDBSERVICE:CreateCollection]: Failed to encode catalog entry")
+		return fmt.Errorf("[GDBSERVICE:CreateCollection] failed to encode stats entry: %v", err)
 	}
 
-	err = kv.PutBinaryWithStringKey(STATS, fmt.Sprintf("%s.%s", s.Name, collection_name), stats_doc)
-
+	err = kv.PutBinaryWithStringKey(STATS, collectionKey, stats_doc)
 	if err != nil {
-		return fmt.Errorf("failed to write db catalog entry")
+		return fmt.Errorf("[GDBSERVICE:CreateCollection] failed to write stats entry: %v", err)
 	}
 
 	return nil
 }
 
 func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error {
+	if len(documents) == 0 {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] documents slice cannot be empty")
+	}
 	kv := s.KvService
 	vectr := faiss.FAISS()
 
@@ -158,109 +157,110 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
 
 	if !exists {
-		return fmt.Errorf("collection:%s could not be found in the db", collection_name)
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] collection %s not found", collection_name)
 	}
 
 	if err != nil {
-		return err
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to get collection catalog: %v", err)
 	}
 
 	var collection CollectionCatalogEntry
-
-	bson.Unmarshal(val, &collection)
+	if err := bson.Unmarshal(val, &collection); err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to unmarshal collection catalog: %v", err)
+	}
 
 	vectorIndexUri := collection.VectorIndexUri
 
 	var filePath string
-
 	u, err := url.Parse(vectorIndexUri)
 	if err != nil {
-		return fmt.Errorf("failed to parse vector index URI: %v", err)
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to parse vector index URI: %v", err)
 	}
 	filePath = u.Path
 
 	idx, err := vectr.ReadIndex(filePath)
-
 	if err != nil {
 		const indexDesc = "Flat"
 		idx, err = vectr.IndexFactory(len(documents[0].Embedding), indexDesc, faiss.MetricL2)
 		if err != nil {
-			return fmt.Errorf("failed to create new vector index for collection: %v (after failing to load old: %w)", err, err)
+			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to create new vector index: %v", err)
 		}
-
-		if writeErr := idx.WriteToFile(filePath); writeErr != nil {
-			return fmt.Errorf("failed to persist new IVF index to %s: %v", filePath, writeErr)
-		}
-		//return fmt.Errorf("unable to read vector index index from file path:%s", filePath)
 	}
 
 	hot_stats, _, err := kv.GetBinary(STATS, []byte(collectionDefKey))
-
 	if err != nil {
-		return fmt.Errorf("failed to fetch hot stats:%s", err)
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to fetch hot stats: %v", err)
 	}
 
 	var hot_stats_doc CollectionStats
-
-	err = bson.Unmarshal(hot_stats, &hot_stats_doc)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal hot stats bson into struct:%s", err)
+	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to unmarshal hot stats: %v", err)
 	}
 
 	destTableURI := collection.TableUri
 
+	embeddings := make([]float32, 0, len(documents)*len(documents[0].Embedding))
+	docKeys := make([][]byte, 0, len(documents))
+	docBytes := make([][]byte, 0, len(documents))
+	labelMappings := make([]string, 0, len(documents))
+
 	for _, doc := range documents {
 		doc_bytes, err := bson.Marshal(doc)
 		if err != nil {
-			return fmt.Errorf("failed to marshal document to BSON: %v", err)
+			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to marshal document %s: %v", doc._Id.Hex(), err)
 		}
+
 		key := doc._Id[:]
+		docKeys = append(docKeys, key)
+		docBytes = append(docBytes, doc_bytes)
 
-		if err := s.KvService.PutBinary(destTableURI, key, doc_bytes); err != nil {
-			return fmt.Errorf("failed to insert document with _id %s: %v", doc._Id.Hex(), err)
-		}
-
-		err = idx.Add(doc.Embedding, 1)
-		var label int64 = -1
-		if err != nil {
-			return fmt.Errorf("failed to add embedding to index for _id %s: %v", doc._Id.Hex(), err)
-		}
-
-		if nTotal, nErr := idx.NTotal(); nErr == nil {
-			label = nTotal - 1
-		}
+		embeddings = append(embeddings, doc.Embedding...)
 
 		docIDHex := fmt.Sprintf("%x", key)
-		err = s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docIDHex)
+		labelMappings = append(labelMappings, docIDHex)
+	}
 
-		if err != nil {
-			return fmt.Errorf("failed to write label->docID mapping to table: %v", err)
+	for i, key := range docKeys {
+		if err := s.KvService.PutBinary(destTableURI, key, docBytes[i]); err != nil {
+			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to insert document %x: %v", key, err)
 		}
-
-		hot_stats_doc.Doc_Count += 1
 	}
 
-	info, err := os.Stat(filePath)
-
+	startLabel, err := idx.NTotal()
 	if err != nil {
-		return fmt.Errorf("failed to read file info from vector index file")
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to get index size: %v", err)
 	}
 
-	hot_stats_doc.Vector_Index_Size += float64(info.Size())
-
-	bytes, err := bson.Marshal(hot_stats_doc)
-
-	if err != nil {
-		return fmt.Errorf("failed to marshal hot stats during write")
+	if err := idx.Add(embeddings, len(documents)); err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to add embeddings to index: %v", err)
 	}
-	err = kv.PutBinary(STATS, []byte(collectionDefKey), bytes)
 
-	if err != nil {
-		return fmt.Errorf("failed to write hot stats: %s", err)
+	for i, docIDHex := range labelMappings {
+		label := startLabel + int64(i)
+		if err := s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docIDHex); err != nil {
+			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to write label->docID mapping for label %d: %v", label, err)
+		}
 	}
 
 	if err := idx.WriteToFile(filePath); err != nil {
-		return fmt.Errorf("writeToFile failed: %v", err)
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to write index to file: %v", err)
+	}
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to stat vector index file: %v", err)
+	}
+
+	hot_stats_doc.Doc_Count += int(len(documents))
+	hot_stats_doc.Vector_Index_Size = float64(info.Size())
+
+	bytes, err := bson.Marshal(hot_stats_doc)
+	if err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to marshal hot stats: %v", err)
+	}
+
+	if err := kv.PutBinary(STATS, []byte(collectionDefKey), bytes); err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to write hot stats: %v", err)
 	}
 
 	return nil

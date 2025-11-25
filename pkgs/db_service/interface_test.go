@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -114,7 +115,14 @@ func TestCreateCollection(t *testing.T) {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
-	dbSvc.CreateCollection(collName)
+	start := time.Now()
+	err = dbSvc.CreateCollection(collName)
+	elapsed := time.Since(start)
+	t.Logf("CreateCollection took: %v\n", elapsed)
+
+	if err != nil {
+		t.Errorf("Failed to create collection: %s", err)
+	}
 
 	// Get vector index URI for cleanup
 	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
@@ -199,28 +207,20 @@ func TestInsertDocuments(t *testing.T) {
 		t.Errorf("Failed to create collection: %s", err)
 	}
 
-	documents := []GlowstickDocument{
-		{
+	documents := make([]GlowstickDocument, 10)
+	for i := 0; i < 10; i++ {
+		documents[i] = GlowstickDocument{
 			_Id:       primitive.NewObjectID(),
-			Content:   "First example document",
+			Content:   fmt.Sprintf("Example document %d", i+1),
 			Embedding: genEmbeddings(1536),
-			Metadata:  map[string]interface{}{"type": "example", "index": 1},
-		},
-		{
-			_Id:       primitive.NewObjectID(),
-			Content:   "Second example document",
-			Embedding: genEmbeddings(1536),
-			Metadata:  map[string]interface{}{"type": "example", "index": 2},
-		},
-		{
-			_Id:       primitive.NewObjectID(),
-			Content:   "Third example document",
-			Embedding: genEmbeddings(1536),
-			Metadata:  map[string]interface{}{"type": "example", "index": 3},
-		},
+			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
+		}
 	}
 
+	start := time.Now()
 	err = dbSvc.InsertDocumentsIntoCollection(collName, documents)
+	duration := time.Since(start)
+	fmt.Printf("InsertDocumentsIntoCollection took: %v\n", duration)
 	if err != nil {
 		t.Errorf("InsertDocumentsIntoCollection returned error: %v", err)
 	}
@@ -330,8 +330,8 @@ func TestBasicVectorQuery(t *testing.T) {
 		t.Errorf("Failed to create collection: %s", err)
 	}
 
-	documents := make([]GlowstickDocument, 10)
-	for i := 0; i < 10; i++ {
+	documents := make([]GlowstickDocument, 15)
+	for i := 0; i < 15; i++ {
 		documents[i] = GlowstickDocument{
 			_Id:       primitive.NewObjectID(),
 			Content:   fmt.Sprintf("Example document number %d", i+1),
@@ -389,15 +389,24 @@ func TestBasicVectorQuery(t *testing.T) {
 		t.Logf("  Content: %s\n", doc.Content)
 		t.Logf("  Metadata: %+v\n", doc.Metadata)
 		t.Logf("  Embedding length: %d\n", len(doc.Embedding))
-		t.Log()
 	}
 
 	if len(docs) != topK {
 		t.Error("Returned docs don't match top K")
 	}
 
-}
+	hot_stats, _, err := wtService.GetBinary(STATS, []byte(collectionDefKey))
+	if err != nil {
+		t.Errorf("failed to fetch hot stats: %v", err)
+	}
 
+	var hot_stats_doc CollectionStats
+	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
+		t.Errorf("failed to unmarshal hot stats: %v", err)
+	}
+	t.Logf("Hot stats doc value: %+v", hot_stats_doc)
+
+}
 func genEmbeddings(dim int) []float32 {
 	fs := faiss.FAISS()
 	randVec := make([]float32, dim)

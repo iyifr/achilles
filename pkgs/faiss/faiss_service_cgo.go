@@ -233,6 +233,7 @@ func (c *cgoService) Train(idx *Index, x []float32, n int) error {
 	return trainIndex(idx, x, n)
 }
 
+// TODO: Cache hot indexes and overwrite cache during writes.
 func (c *cgoService) ReadIndex(path string) (*Index, error) {
 	fname := C.CString(path)
 	defer C.free(unsafe.Pointer(fname))
