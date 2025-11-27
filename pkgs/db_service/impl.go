@@ -1,9 +1,9 @@
 package dbservice
 
 import (
+	"achillesdb/pkgs/faiss"
+	wt "achillesdb/pkgs/wiredtiger"
 	"fmt"
-	"glowstickdb/pkgs/faiss"
-	wt "glowstickdb/pkgs/wiredtiger"
 	"net/url"
 	"os"
 	"sort"
@@ -387,7 +387,7 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		}
 
 		if !exists {
-			return nil, fmt.Errorf("failed to get document with id %v", val)
+			return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to get document with id %v", val)
 		}
 
 		if len(docBin) > 0 {

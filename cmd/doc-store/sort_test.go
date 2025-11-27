@@ -1,8 +1,8 @@
 package main
 
 import (
+	"achillesdb/pkgs/wiredtiger"
 	"fmt"
-	"glowstickdb/pkgs/wiredtiger"
 	"log"
 	"os"
 	"reflect"

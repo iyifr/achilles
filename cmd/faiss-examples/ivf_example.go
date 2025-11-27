@@ -1,8 +1,8 @@
 package main
 
 import (
+	"achillesdb/pkgs/faiss"
 	"fmt"
-	"glowstickdb/pkgs/faiss"
 	"math/rand"
 	"os"
 	"time"

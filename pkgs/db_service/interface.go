@@ -1,7 +1,7 @@
 package dbservice
 
 import (
-	wt "glowstickdb/pkgs/wiredtiger"
+	wt "achillesdb/pkgs/wiredtiger"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )

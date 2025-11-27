@@ -6,8 +6,8 @@ import (
 	"math/rand"
 	"os"
 
-	"glowstickdb/pkgs/faiss"
-	"glowstickdb/pkgs/wiredtiger"
+	"achillesdb/pkgs/faiss"
+	"achillesdb/pkgs/wiredtiger"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

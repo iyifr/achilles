@@ -9,7 +9,7 @@ package main
 
 import (
     "fmt"
-    "glowstickdb/pkgs/faiss"
+    "achillesdb/pkgs/faiss"
 )
 
 func main() {

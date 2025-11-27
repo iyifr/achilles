@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	wt "glowstickdb/pkgs/wiredtiger"
+	wt "achillesdb/pkgs/wiredtiger"
 )
 
 // TestResult holds metrics for a test run

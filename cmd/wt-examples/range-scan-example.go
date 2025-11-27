@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	wt "glowstickdb/pkgs/wiredtiger"
+	wt "achillesdb/pkgs/wiredtiger"
 )
 
 func RunRangeScanExample() {

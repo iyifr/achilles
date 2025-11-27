@@ -1,9 +1,9 @@
 package dbservice
 
 import (
+	"achillesdb/pkgs/faiss"
+	"achillesdb/pkgs/wiredtiger"
 	"fmt"
-	"glowstickdb/pkgs/faiss"
-	"glowstickdb/pkgs/wiredtiger"
 	"math/rand/v2"
 	"os"
 	"testing"

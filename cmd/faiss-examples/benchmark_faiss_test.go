@@ -1,7 +1,7 @@
 package main
 
 import (
-	"glowstickdb/pkgs/faiss"
+	"achillesdb/pkgs/faiss"
 	"math/rand"
 	"testing"
 	"time"

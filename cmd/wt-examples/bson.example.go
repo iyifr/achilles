@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"glowstickdb/pkgs/wiredtiger"
+	"achillesdb/pkgs/wiredtiger"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
