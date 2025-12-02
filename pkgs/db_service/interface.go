@@ -12,7 +12,7 @@ var STATS = "table:_stats"
 var LABELS_TO_DOC_ID_MAPPING_TABLE_URI = "table:label_docID"
 
 type GlowstickDocument struct {
-	_Id       primitive.ObjectID `bson:"_id"`
+	Id        primitive.ObjectID `bson:"_id"`
 	Content   string             `bson:"content"`
 	Embedding []float32          `bson:"embedding"`
 	Metadata  interface{}        `bson:"metadata"` // Any BSON- and JSON-serializable type

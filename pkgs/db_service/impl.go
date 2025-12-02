@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"sort"
+	"strconv"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -207,10 +207,10 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 	for _, doc := range documents {
 		doc_bytes, err := bson.Marshal(doc)
 		if err != nil {
-			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to marshal document %s: %v", doc._Id.Hex(), err)
+			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to marshal document %s: %v", doc.Id.Hex(), err)
 		}
 
-		key := doc._Id[:]
+		key := doc.Id[:]
 		docKeys = append(docKeys, key)
 		docBytes = append(docBytes, doc_bytes)
 
@@ -269,12 +269,11 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 func (s *GDBService) ListCollections() error {
 	return nil
 }
-
 func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error) {
 	kv := s.KvService
 	vectr_svc := faiss.FAISS()
 
-	docs := []GlowstickDocument{}
+	docs := make([]GlowstickDocument, 0, query.TopK)
 
 	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
 
@@ -295,12 +294,13 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 	vectorIndexUri := collection.VectorIndexUri
 
 	var filePath string
-
-	u, err := url.Parse(vectorIndexUri)
-	if err != nil {
-		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to parse vector index URI: %v", err)
+	if vectorIndexUri != "" {
+		u, err := url.Parse(vectorIndexUri)
+		if err != nil {
+			return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to parse vector index URI: %v", err)
+		}
+		filePath = u.Path
 	}
-	filePath = u.Path
 
 	idx, err := vectr_svc.ReadIndex(filePath)
 	defer idx.Free()
@@ -311,77 +311,52 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 	distances, ids, err := idx.Search(query.QueryEmbedding, 1, int(query.TopK))
 
-	// Print distances and IDs in a table format
-	fmt.Printf("\n%-10s %-15s\n", "Index", "Distance")
-	fmt.Printf("%-10s %-15s\n", "-----", "--------")
-	for i, distance := range distances {
-		fmt.Printf("%-10d %-15.6f\n", ids[i], distance)
-	}
-	fmt.Println()
-
 	if err != nil {
 		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to search vector index for query embedding")
 	}
 
-	indices := make([]int, len(distances))
-	for i := range indices {
-		indices[i] = i
-	}
+	keyBuffer := make([]byte, 0, 16)
 
-	sort.Slice(indices, func(i, j int) bool {
-		return distances[indices[i]] < distances[indices[j]]
-	})
+	var lastErr error
+	var errorCount int
 
-	var lastErr error = err
-	for _, index := range indices {
-		id := ids[index]
-
-		fmt.Printf("ID: %d\n", id)
-		distance := distances[index]
+	for i, id := range ids {
+		distance := distances[i]
 
 		// id could be -1 if FAISS returned a "no result"; handle this
 		if id < 0 {
 			continue
 		}
 
-		key := fmt.Sprintf("%d", id)
+		keyBuffer = keyBuffer[:0]
+		keyBuffer = strconv.AppendInt(keyBuffer, int64(id), 10)
+		key := string(keyBuffer)
+
 		val, _, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
 		if err != nil {
-			fmt.Printf("Failed to get docID for label %s: %v\n", key, err)
+			errorCount++
 			lastErr = err
 			continue
 		}
 
 		if len(val) != 24 {
-			fmt.Printf("Invalid ObjectID hex length: expected 24, got %d for '%s'\n", len(val), val)
+			errorCount++
 			lastErr = fmt.Errorf("invalid ObjectID hex length: expected 24, got %d for '%s'", len(val), val)
 			continue
 		}
 
 		objectID, err := primitive.ObjectIDFromHex(val)
-		if err != nil {
-			fmt.Printf("Failed to parse docID '%s' as ObjectID hex: %v\n", val, err)
-			lastErr = err
+		if err != nil || objectID.IsZero() {
+			errorCount++
+			lastErr = fmt.Errorf("failed to parse or invalid ObjectID '%s': %v", val, err)
 			continue
 		}
 
-		// Validate the ObjectID is not empty/zero
-		if objectID.IsZero() {
-			fmt.Printf("ObjectID is zero/empty for hex '%s'\n", val)
-			lastErr = fmt.Errorf("ObjectID is zero/empty for hex '%s'", val)
-			continue
-		}
-
-		docIDBytes := objectID[:] // Convert ObjectID to raw [12]byte slice
-		if len(docIDBytes) != 12 {
-			fmt.Printf("Invalid docIDBytes length: expected 12, got %d\n", len(docIDBytes))
-			lastErr = fmt.Errorf("invalid docIDBytes length: expected 12, got %d", len(docIDBytes))
-			continue
-		}
+		docIDBytes := objectID[:]
 
 		docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
 		if err != nil {
-			fmt.Printf("Failed to get document for docID %s in table %s: %v\n", val, collection.TableUri, err)
+			errorCount++
 			lastErr = err
 			continue
 		}
@@ -394,19 +369,19 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 			var doc GlowstickDocument
 
 			if err := bson.Unmarshal(docBin, &doc); err != nil {
-				fmt.Printf("Failed to unmarshal BSON for docID %s: %v\n", val, err)
+				errorCount++
 				lastErr = err
 				continue
 			}
 
-			fmt.Printf("DocID: %s, Distance: %f\n", val, distance)
-
 			if query.MaxDistance == 0 || distance < query.MaxDistance {
 				docs = append(docs, doc)
-			} else {
-				fmt.Printf("DocID: %s, skipped\n", val)
 			}
 		}
+	}
+
+	if errorCount > 0 && lastErr != nil {
+		fmt.Printf("[QueryCollection] Encountered %d errors during processing. Last error: %v\n", errorCount, lastErr)
 	}
 
 	return docs, lastErr

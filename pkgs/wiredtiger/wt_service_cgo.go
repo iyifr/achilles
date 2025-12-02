@@ -1388,7 +1388,6 @@ func (s *cgoService) PutBinary(table string, key []byte, value []byte) error {
 	}
 	return nil
 }
-
 func (s *cgoService) GetBinary(table string, key []byte) ([]byte, bool, error) {
 	if s.conn == nil {
 		return nil, false, errors.New("connection not open")
@@ -1402,7 +1401,11 @@ func (s *cgoService) GetBinary(table string, key []byte) ([]byte, bool, error) {
 	var outVal C.WT_ITEM
 	err := C.wt_get_bin(s.conn, curi, (*C.uchar)(unsafe.Pointer(&key[0])), C.size_t(len(key)), &outVal)
 	if err != 0 {
-		return nil, false, nil
+		return nil, false, fmt.Errorf("wiredtiger binary get failed with error code %d", int(err))
+	}
+
+	if outVal.data == nil {
+		return nil, false, errors.New("wiredtiger returned null data pointer")
 	}
 
 	// Copy C data to Go slice

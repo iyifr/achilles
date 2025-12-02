@@ -4,8 +4,11 @@ import (
 	"achillesdb/pkgs/faiss"
 	"achillesdb/pkgs/wiredtiger"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,7 +185,7 @@ func TestInsertDocuments(t *testing.T) {
 		}
 	}
 
-	if err := wtService.Open(WIREDTIGER_DIR, "create"); err != nil {
+	if err := wtService.Open(WIREDTIGER_DIR, getWiredTigerConfigForConnection()); err != nil {
 		t.Log("Err occured")
 	}
 
@@ -210,7 +213,7 @@ func TestInsertDocuments(t *testing.T) {
 	documents := make([]GlowstickDocument, 10)
 	for i := 0; i < 10; i++ {
 		documents[i] = GlowstickDocument{
-			_Id:       primitive.NewObjectID(),
+			Id:        primitive.NewObjectID(),
 			Content:   fmt.Sprintf("Example document %d", i+1),
 			Embedding: genEmbeddings(1536),
 			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
@@ -245,20 +248,20 @@ func TestInsertDocuments(t *testing.T) {
 	}
 
 	for index, doc := range documents {
-		docKey := doc._Id[:]
+		docKey := doc.Id[:]
 		fmt.Printf("Index: %d, docKey: %x\n", index, docKey)
 
 		record, found, err := wtService.GetBinary(collTableURI, docKey)
 		if err != nil {
-			t.Errorf("failed to read doc _id=%s from table %s: %v", doc._Id.Hex(), collTableURI, err)
+			t.Errorf("failed to read doc _id=%s from table %s: %v", doc.Id.Hex(), collTableURI, err)
 		}
 		if !found {
-			t.Errorf("inserted doc _id=%s not found in collection physical table %s", doc._Id.Hex(), collTableURI)
+			t.Errorf("inserted doc _id=%s not found in collection physical table %s", doc.Id.Hex(), collTableURI)
 		}
 
 		var restoredDoc GlowstickDocument
 		if err := bson.Unmarshal(record, &restoredDoc); err != nil {
-			t.Errorf("unmarshal failed for _id=%s: %v", doc._Id.Hex(), err)
+			t.Errorf("unmarshal failed for _id=%s: %v", doc.Id.Hex(), err)
 		}
 		if doc.Content != restoredDoc.Content {
 			t.Errorf("Retrieved content does not match document saved. Retrieved:%s, Document:%s", restoredDoc.Content, doc.Content)
@@ -304,8 +307,7 @@ func TestBasicVectorQuery(t *testing.T) {
 			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
 		}
 	}
-
-	if err := wtService.Open(WIREDTIGER_DIR, "create"); err != nil {
+	if err := wtService.Open(WIREDTIGER_DIR, "create,cache_size=4GB,eviction_trigger=95,eviction_dirty_target=5,eviction_dirty_trigger=15,eviction=(threads_max=8),checkpoint=(wait=300)"); err != nil {
 		t.Log("Err occured")
 	}
 
@@ -330,12 +332,13 @@ func TestBasicVectorQuery(t *testing.T) {
 		t.Errorf("Failed to create collection: %s", err)
 	}
 
-	documents := make([]GlowstickDocument, 15)
-	for i := 0; i < 15; i++ {
+	content := generateLongText()
+	documents := make([]GlowstickDocument, 7000)
+	for i := 0; i < 7000; i++ {
 		documents[i] = GlowstickDocument{
-			_Id:       primitive.NewObjectID(),
-			Content:   fmt.Sprintf("Example document number %d", i+1),
-			Embedding: genEmbeddings(1536),
+			Id:        primitive.NewObjectID(),
+			Content:   content,
+			Embedding: genEmbeddings(768),
 			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
 		}
 	}
@@ -347,33 +350,36 @@ func TestBasicVectorQuery(t *testing.T) {
 
 	// Get vector index URI for cleanup
 	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
-	val, exists, err := wtService.GetBinary(CATALOG, []byte(collectionDefKey))
-	var vectorIndexPath string
-	if err == nil && exists {
-		var catalogEntry CollectionCatalogEntry
-		if bson.Unmarshal(val, &catalogEntry) == nil {
-			vectorIndexPath = catalogEntry.VectorIndexUri
-		}
-	}
+	// val, exists, err := wtService.GetBinary(CATALOG, []byte(collectionDefKey))
+	// //var vectorIndexPath string
+	// if err == nil && exists {
+	// 	var catalogEntry CollectionCatalogEntry
+	// 	if bson.Unmarshal(val, &catalogEntry) == nil {
+	// 		//vectorIndexPath = catalogEntry.VectorIndexUri
+	// 	}
+	// }
 
 	t.Cleanup(func() {
 		if err := wtService.Close(); err != nil {
 			fmt.Printf("Warning: failed to close connection: %v\n", err)
 		}
-		if vectorIndexPath != "" {
-			os.Remove(vectorIndexPath)
-		}
-		os.RemoveAll("volumes/WT_HOME_TEST")
+		// if vectorIndexPath != "" {
+		// 	os.Remove(vectorIndexPath)
+		// }
+		//os.RemoveAll("volumes/WT_HOME_TEST")
 	})
 
 	topK := 5
 
 	query := QueryStruct{
 		TopK:           int32(topK),
-		QueryEmbedding: genEmbeddings(1536),
+		QueryEmbedding: genEmbeddings(768),
 	}
 
+	start := time.Now()
 	docs, err := dbSvc.QueryCollection(collName, query)
+	duration := time.Since(start)
+	t.Logf("QueryCollection took: %v", duration)
 
 	if err != nil {
 		t.Errorf("error occured during query %v", err)
@@ -385,7 +391,7 @@ func TestBasicVectorQuery(t *testing.T) {
 	t.Logf("Query returned %d documents:\n", len(docs))
 	for i, doc := range docs {
 		t.Logf("Document %d:\n", i+1)
-		t.Logf("  ID: %s\n", doc._Id.Hex())
+		t.Logf("  ID: %s\n", doc.Id.Hex())
 		t.Logf("  Content: %s\n", doc.Content)
 		t.Logf("  Metadata: %+v\n", doc.Metadata)
 		t.Logf("  Embedding length: %d\n", len(doc.Embedding))
@@ -414,4 +420,46 @@ func genEmbeddings(dim int) []float32 {
 		randVec[i] = rand.Float32()
 	}
 	return fs.NormalizeBatch(randVec, dim)
+}
+
+func getWiredTigerConfigForConnection() string {
+	// Get available RAM and round up to GB
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	availableRAM := m.Sys
+	ramGB := math.Ceil(float64(availableRAM) / (1024 * 1024 * 1024))
+
+	// Compute WiredTiger configuration string with cache size based on available RAM
+	cachePercent := 45
+	cacheSizeGB := int(ramGB * float64(cachePercent) / 100)
+	if cacheSizeGB < 1 {
+		cacheSizeGB = 1 // Minimum 1GB
+	}
+
+	return fmt.Sprintf("create,cache_size=%dGB,eviction_trigger=90,eviction_dirty_target=10,eviction_dirty_trigger=30,eviction=(threads_max=8)", cacheSizeGB)
+}
+func generateLongText() string {
+	words := []string{
+		"the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog",
+		"artificial", "intelligence", "machine", "learning", "database", "vector",
+		"embedding", "search", "query", "document", "collection", "index",
+		"algorithm", "neural", "network", "deep", "learning", "natural",
+		"language", "processing", "computer", "science", "technology", "data",
+		"analysis", "information", "retrieval", "semantic", "similarity",
+		"clustering", "classification", "optimization", "performance", "scalability",
+	}
+
+	// Generate text with 50-100 words (reduced range)
+	numWords := 50 + rand.IntN(51) // 50-100 words instead of potentially huge numbers
+	var text strings.Builder
+	text.Grow(numWords * 10) // Pre-allocate capacity
+
+	for i := 0; i < numWords; i++ {
+		if i > 0 {
+			text.WriteString(" ")
+		}
+		text.WriteString(words[rand.IntN(len(words))])
+	}
+
+	return text.String()
 }
