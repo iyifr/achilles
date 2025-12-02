@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -145,7 +146,6 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 
 	return nil
 }
-
 func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error {
 	if len(documents) == 0 {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] documents slice cannot be empty")
@@ -199,27 +199,31 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 
 	destTableURI := collection.TableUri
 
-	embeddings := make([]float32, 0, len(documents)*len(documents[0].Embedding))
-	docKeys := make([][]byte, 0, len(documents))
-	docBytes := make([][]byte, 0, len(documents))
-	labelMappings := make([]string, 0, len(documents))
+	numDocs := len(documents)
+	embeddingDim := len(documents[0].Embedding)
 
-	for _, doc := range documents {
+	embeddings := make([]float32, numDocs*embeddingDim)
+	docKeys := make([][]byte, numDocs)
+	docBytes := make([][]byte, numDocs)
+	labelMappings := make([]string, numDocs)
+
+	for i, doc := range documents {
 		doc_bytes, err := bson.Marshal(doc)
 		if err != nil {
 			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to marshal document %s: %v", doc.Id.Hex(), err)
 		}
 
 		key := doc.Id[:]
-		docKeys = append(docKeys, key)
-		docBytes = append(docBytes, doc_bytes)
+		docKeys[i] = key
+		docBytes[i] = doc_bytes
 
-		embeddings = append(embeddings, doc.Embedding...)
+		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
 
 		docIDHex := fmt.Sprintf("%x", key)
-		labelMappings = append(labelMappings, docIDHex)
+		labelMappings[i] = docIDHex
 	}
 
+	// Insert documents into KV store
 	for i, key := range docKeys {
 		if err := s.KvService.PutBinary(destTableURI, key, docBytes[i]); err != nil {
 			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to insert document %x: %v", key, err)
@@ -275,7 +279,7 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 	docs := make([]GlowstickDocument, 0, query.TopK)
 
-	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
+	collectionDefKey := s.Name + "." + collection_name
 
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
 
@@ -309,82 +313,141 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - could not vector index after specfied file path: %v", err)
 	}
 
+	start := time.Now()
 	distances, ids, err := idx.Search(query.QueryEmbedding, 1, int(query.TopK))
+	searchDuration := time.Since(start)
+	fmt.Printf("Vector index search took: %v\n", searchDuration)
 
 	if err != nil {
 		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to search vector index for query embedding")
 	}
 
-	keyBuffer := make([]byte, 0, 16)
+	if len(ids) == 0 {
+		return docs, nil
+	}
 
-	var lastErr error
-	var errorCount int
+	// For small k values, use sequential processing to avoid overhead
+	if len(ids) <= 3 {
+		for i, id := range ids {
+			distance := distances[i]
 
-	for i, id := range ids {
-		distance := distances[i]
+			// Build key for label->docID mapping lookup
+			key := strconv.FormatInt(int64(id), 10)
 
-		// id could be -1 if FAISS returned a "no result"; handle this
-		if id < 0 {
-			continue
-		}
-
-		keyBuffer = keyBuffer[:0]
-		keyBuffer = strconv.AppendInt(keyBuffer, int64(id), 10)
-		key := string(keyBuffer)
-
-		val, _, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-		if err != nil {
-			errorCount++
-			lastErr = err
-			continue
-		}
-
-		if len(val) != 24 {
-			errorCount++
-			lastErr = fmt.Errorf("invalid ObjectID hex length: expected 24, got %d for '%s'", len(val), val)
-			continue
-		}
-
-		objectID, err := primitive.ObjectIDFromHex(val)
-		if err != nil || objectID.IsZero() {
-			errorCount++
-			lastErr = fmt.Errorf("failed to parse or invalid ObjectID '%s': %v", val, err)
-			continue
-		}
-
-		docIDBytes := objectID[:]
-
-		docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
-		if err != nil {
-			errorCount++
-			lastErr = err
-			continue
-		}
-
-		if !exists {
-			return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to get document with id %v", val)
-		}
-
-		if len(docBin) > 0 {
-			var doc GlowstickDocument
-
-			if err := bson.Unmarshal(docBin, &doc); err != nil {
-				errorCount++
-				lastErr = err
-				continue
+			// Get docID from label mapping
+			val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
+			if err != nil || !exists || len(val) != 24 {
+				continue // Skip on error or invalid length
 			}
 
+			objectID, err := primitive.ObjectIDFromHex(val)
+			if err != nil || objectID.IsZero() {
+				continue // Skip invalid ObjectID
+			}
+
+			docIDBytes := objectID[:]
+
+			// Get document from collection table
+			docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
+			if err != nil || !exists || len(docBin) == 0 {
+				continue // Skip on error or missing document
+			}
+
+			var doc GlowstickDocument
+			if err := bson.Unmarshal(docBin, &doc); err != nil {
+				continue // Skip on unmarshal error
+			}
+
+			// Apply distance filter if specified
 			if query.MaxDistance == 0 || distance < query.MaxDistance {
 				docs = append(docs, doc)
 			}
 		}
+		return docs, nil
 	}
 
-	if errorCount > 0 && lastErr != nil {
-		fmt.Printf("[QueryCollection] Encountered %d errors during processing. Last error: %v\n", errorCount, lastErr)
+	// For larger k values, use scatter-gather pattern
+	numWorkers := min(len(ids), 10) // Cap workers to avoid excessive goroutines
+	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
+
+	type docResult struct {
+		doc   GlowstickDocument
+		index int
 	}
 
-	return docs, lastErr
+	resultChan := make(chan docResult, len(ids))
+	var wg sync.WaitGroup
+
+	for i := 0; i < numWorkers; i++ {
+		start := i * chunkSize
+		end := min(start+chunkSize, len(ids))
+
+		if start >= len(ids) {
+			break
+		}
+
+		wg.Add(1)
+		go func(startIdx, endIdx int) {
+			defer wg.Done()
+
+			// Process chunk of IDs
+			for j := startIdx; j < endIdx; j++ {
+				id := ids[j]
+				distance := distances[j]
+
+				// Build key for label->docID mapping lookup
+				key := strconv.FormatInt(id, 10)
+
+				// Get docID from label mapping
+				val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
+				if err != nil || !exists || len(val) != 24 {
+					continue // Skip on error or invalid length
+				}
+
+				objectID, err := primitive.ObjectIDFromHex(val)
+				if err != nil || objectID.IsZero() {
+					continue // Skip invalid ObjectID
+				}
+
+				docIDBytes := objectID[:]
+
+				// Get document from collection table
+				docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
+				if err != nil || !exists || len(docBin) == 0 {
+					continue // Skip on error or missing document
+				}
+
+				var doc GlowstickDocument
+				if err := bson.Unmarshal(docBin, &doc); err != nil {
+					continue // Skip on unmarshal error
+				}
+
+				// Apply distance filter if specified
+				if query.MaxDistance == 0 || distance < query.MaxDistance {
+					resultChan <- docResult{doc: doc, index: j}
+				}
+			}
+		}(start, end)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Goroutines may complete in any order, so we need to use a map to collect results that preserve order from faiss search results.
+	results := make(map[int]GlowstickDocument)
+	for result := range resultChan {
+		results[result.index] = result.doc
+	}
+
+	for i := 0; i < len(ids); i++ {
+		if doc, exists := results[i]; exists {
+			docs = append(docs, doc)
+		}
+	}
+
+	return docs, nil
 }
 
 func InitTablesHelper(wtService wt.WTService) error {

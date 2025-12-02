@@ -210,8 +210,8 @@ func TestInsertDocuments(t *testing.T) {
 		t.Errorf("Failed to create collection: %s", err)
 	}
 
-	documents := make([]GlowstickDocument, 10)
-	for i := 0; i < 10; i++ {
+	documents := make([]GlowstickDocument, 100)
+	for i := 0; i < 100; i++ {
 		documents[i] = GlowstickDocument{
 			Id:        primitive.NewObjectID(),
 			Content:   fmt.Sprintf("Example document %d", i+1),
@@ -333,12 +333,12 @@ func TestBasicVectorQuery(t *testing.T) {
 	}
 
 	content := generateLongText()
-	documents := make([]GlowstickDocument, 7000)
-	for i := 0; i < 7000; i++ {
+	documents := make([]GlowstickDocument, 12000)
+	for i := 0; i < 12000; i++ {
 		documents[i] = GlowstickDocument{
 			Id:        primitive.NewObjectID(),
 			Content:   content,
-			Embedding: genEmbeddings(768),
+			Embedding: genEmbeddings(1536),
 			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
 		}
 	}
@@ -369,11 +369,11 @@ func TestBasicVectorQuery(t *testing.T) {
 		//os.RemoveAll("volumes/WT_HOME_TEST")
 	})
 
-	topK := 5
+	topK := 12
 
 	query := QueryStruct{
 		TopK:           int32(topK),
-		QueryEmbedding: genEmbeddings(768),
+		QueryEmbedding: genEmbeddings(1536),
 	}
 
 	start := time.Now()
@@ -410,7 +410,7 @@ func TestBasicVectorQuery(t *testing.T) {
 	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
 		t.Errorf("failed to unmarshal hot stats: %v", err)
 	}
-	t.Logf("Hot stats doc value: %+v", hot_stats_doc)
+	t.Logf("Hot stats doc value: %+v", fmt.Sprintf("%.2f", hot_stats_doc.Vector_Index_Size))
 
 }
 func genEmbeddings(dim int) []float32 {
