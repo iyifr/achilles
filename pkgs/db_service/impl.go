@@ -31,14 +31,14 @@ type CollectionIndex struct {
 }
 
 type CollectionCatalogEntry struct {
-	Id               primitive.ObjectID `bson:"_id"`
-	Ns               string             `bson:"ns"`
-	TableUri         string             `bson:"table_uri"`
-	VectorIndexUri   string             `bson:"vector_index_uri"`
-	IndexTableUriMap map[string]string  `bson:"index_table_uri_map,omitempty"`
-	Indexes          []CollectionIndex  `bson:"indexes,omitempty"`
-	CreatedAt        primitive.DateTime `bson:"createdAt"`
-	UpdatedAt        primitive.DateTime `bson:"updatedAt"`
+	Id               primitive.ObjectID `bson:"_id" json:"_id"`
+	Ns               string             `bson:"ns" json:"ns"`
+	TableUri         string             `bson:"table_uri" json:"table_uri"`
+	VectorIndexUri   string             `bson:"vector_index_uri" json:"vector_index_uri"`
+	IndexTableUriMap map[string]string  `bson:"index_table_uri_map,omitempty" json:"index_table_uri_map,omitempty"`
+	Indexes          []CollectionIndex  `bson:"indexes,omitempty" json:"indexes,omitempty"`
+	CreatedAt        primitive.DateTime `bson:"createdAt" json:"createdAt"`
+	UpdatedAt        primitive.DateTime `bson:"updatedAt" json:"updatedAt"`
 }
 
 type CollectionStats struct {
@@ -54,12 +54,6 @@ type GDBService struct {
 }
 
 func (s *GDBService) CreateDB() error {
-
-	err := InitTablesHelper(s.KvService)
-
-	if err != nil {
-		return err
-	}
 
 	if s.Name == "" {
 		return fmt.Errorf("database name cannot be empty")
@@ -92,10 +86,6 @@ func (s *GDBService) DeleteDB(name string) error {
 
 func (s *GDBService) CreateCollection(collection_name string) error {
 	kv := s.KvService
-	err := InitTablesHelper(kv)
-	if err != nil {
-		return err
-	}
 
 	if len(collection_name) == 0 {
 		return fmt.Errorf("collection name cannot be empty")
@@ -114,7 +104,7 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 		UpdatedAt:      primitive.NewDateTimeFromTime(time.Now()),
 	}
 
-	err = s.KvService.CreateTable(collectionTableUri, "key_format=u,value_format=u")
+	err := s.KvService.CreateTable(collectionTableUri, "key_format=u,value_format=u")
 	if err != nil {
 		return fmt.Errorf("[GDBSERVICE:CreateCollection] failed to create table %s: %v", collectionTableUri, err)
 	}
@@ -184,6 +174,48 @@ func (s *GDBService) ListCollections() ([]CollectionCatalogEntry, error) {
 	return collections, nil
 }
 
+func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, error) {
+	if s.Name == "" {
+		return CollectionEntry{}, fmt.Errorf("[GDBSERVICE:GetCollection] database name cannot be empty")
+	}
+
+	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
+	val, exists, err := s.KvService.GetBinary(CATALOG, []byte(collectionDefKey))
+
+	if err != nil {
+		return CollectionEntry{}, fmt.Errorf("[GDBSERVICE:GetCollection] failed to get collection catalog: %v", err)
+	}
+
+	if !exists {
+		return CollectionEntry{}, fmt.Errorf("[GDBSERVICE:GetCollection] collection %s not found", collection_name)
+	}
+
+	var collection CollectionCatalogEntry
+	if err := bson.Unmarshal(val, &collection); err != nil {
+		return CollectionEntry{}, fmt.Errorf("[GDBSERVICE:GetCollection] failed to unmarshal collection catalog: %v", err)
+	}
+
+	// Get collection stats
+	statsVal, statsExists, statsErr := s.KvService.GetBinary(STATS, []byte(collectionDefKey))
+	var stats CollectionStats
+	if statsErr == nil && statsExists {
+		if err := bson.Unmarshal(statsVal, &stats); err != nil {
+			return CollectionEntry{}, fmt.Errorf("[GDBSERVICE:GetCollection] failed to unmarshal collection stats: %v", err)
+		}
+	}
+
+	// For now, return empty documents slice as we don't typically load all documents
+	// This could be extended to support pagination or filtering in the future
+	documents := make([]GlowstickDocument, 0)
+
+	stats.Vector_Index_Size = float64(stats.Vector_Index_Size)
+
+	return CollectionEntry{
+		Info:      collection,
+		Documents: documents,
+		Stats:     stats,
+	}, nil
+}
 func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error {
 	if len(documents) == 0 {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] documents slice cannot be empty")
@@ -482,22 +514,25 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 }
 
 func InitTablesHelper(wtService wt.WTService) error {
-	if _, err := os.Stat("volumes/WT_HOME"); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll("volumes/WT_HOME", 0755); mkErr != nil {
-			return fmt.Errorf("failed to create volumes/db_files: %w", mkErr)
+	// Define table configurations
+	tables := map[string]string{
+		CATALOG:                            "key_format=u,value_format=u,exclusive=true",
+		STATS:                              "key_format=u,value_format=u,exclusive=true",
+		LABELS_TO_DOC_ID_MAPPING_TABLE_URI: "key_format=S,value_format=S,exclusive=true",
+	}
+
+	// Loop through each table and apply the check-and-create logic
+	for tableURI, config := range tables {
+		exists, err := wtService.TableExists(tableURI)
+		if err != nil {
+			return fmt.Errorf("failed to check if table exists: %v", err)
 		}
-	}
 
-	if err := wtService.CreateTable(CATALOG, "key_format=u,value_format=u"); err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
-	}
-
-	if err := wtService.CreateTable(STATS, "key_format=u,value_format=u"); err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
-	}
-
-	if err := wtService.CreateTable(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, "key_format=S,value_format=S"); err != nil {
-		return fmt.Errorf("failed to create table: %v", err)
+		if !exists {
+			if err := wtService.CreateTable(tableURI, config); err != nil {
+				return fmt.Errorf("failed to create table: %v", err)
+			}
+		}
 	}
 
 	return nil

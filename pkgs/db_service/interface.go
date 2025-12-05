@@ -24,6 +24,11 @@ type QueryStruct struct {
 	QueryEmbedding []float32
 	Filters        map[string]interface{}
 }
+type CollectionEntry struct {
+	Info      CollectionCatalogEntry
+	Documents []GlowstickDocument
+	Stats     CollectionStats
+}
 
 type DBService interface {
 	CreateDB() error
@@ -32,6 +37,7 @@ type DBService interface {
 	InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
 	ListCollections() ([]CollectionCatalogEntry, error)
+	GetCollection(collection_name string) (CollectionEntry, error)
 }
 
 type DbParams struct {

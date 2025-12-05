@@ -494,9 +494,12 @@ func TestListCollections(t *testing.T) {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
-	err = dbSvc.CreateCollection(collName)
-	if err != nil {
-		t.Errorf("Failed to create collection: %s", err)
+	colls := []string{"tenant_id_1", "tenant_id_2", "tenant_id_3"}
+	for _, coll := range colls {
+		err = dbSvc.CreateCollection(coll)
+		if err != nil {
+			t.Errorf("Failed to create collection: %s", err)
+		}
 	}
 
 	collections, err := dbSvc.ListCollections()
@@ -515,6 +518,7 @@ func TestListCollections(t *testing.T) {
 		t.Errorf("First collection does not match expected: %s", firstColl.Ns)
 	}
 
+	t.Logf("Collections: %v", collections)
 	t.Cleanup(func() {
 		if err := wtService.Close(); err != nil {
 			fmt.Printf("Warning: failed to close connection: %v\n", err)

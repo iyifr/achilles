@@ -31,11 +31,43 @@ static int wt_create_wrap(WT_CONNECTION *conn, const char* name, const char* con
 	if (!conn || !name || !config) return -1;
 	WT_SESSION *session = NULL;
 	int err = conn->open_session(conn, NULL, NULL, &session);
-	if (err != 0) return err;
+	if (err != 0) {
+		printf("[wt_create_wrap] Failed to open session, error: %d (%s)\n", err, wiredtiger_strerror(err));
+		return err;
+	}
 	if (!session) return -1;
 	err = session->create(session, name, config);
+	if (err != 0) {
+		printf("[wt_create_wrap] Failed to create table '%s', error: %d (%s)\n", name, err, wiredtiger_strerror(err));
+	}
 	int cerr = session->close(session, NULL);
 	return err != 0 ? err : cerr;
+}
+
+int wt_table_exists(WT_CONNECTION *conn, const char* uri, int *exists) {
+	if (!conn || !uri || !exists) return -1;
+	*exists = 0;
+	WT_SESSION *session = NULL;
+	WT_CURSOR *cursor = NULL;
+	int err = conn->open_session(conn, NULL, NULL, &session);
+	if (err != 0) return err;
+	if (!session) return -1;
+
+	err = session->open_cursor(session, uri, NULL, NULL, &cursor);
+	if (err == 0) {
+		*exists = 1;
+		cursor->close(cursor);
+	} else if (err == 2) {
+		*exists = 0;
+		err = 0;
+	}
+
+	session->close(session, NULL);
+	// Print error details for debugging
+	if (err != 0) {
+		printf("[wt_table_exists] Error opening cursor for '%s': %d (%s)\n", uri, err, wiredtiger_strerror(err));
+	}
+	return err;
 }
 
 // ============================================================================
@@ -1176,6 +1208,20 @@ func (s *cgoService) CreateTable(name string, config string) error {
 		return fmt.Errorf("wiredtiger create failed with error code %d", int(err))
 	}
 	return nil
+}
+
+func (s *cgoService) TableExists(name string) (bool, error) {
+	if s.conn == nil {
+		return false, errors.New("connection not open")
+	}
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	var exists C.int
+	err := C.wt_table_exists(s.conn, cname, &exists)
+	if err != 0 {
+		return false, fmt.Errorf("wiredtiger table check failed with error code %d", int(err))
+	}
+	return exists != 0, nil
 }
 
 // ============================================================================
