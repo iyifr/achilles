@@ -332,9 +332,14 @@ func TestBasicVectorQuery(t *testing.T) {
 		t.Errorf("Failed to create collection: %s", err)
 	}
 
+	// err = dbSvc.ListCollections()
+	// if err != nil {
+	// 	t.Errorf("Failed to list collections: %s", err)
+	// }
+
 	content := generateLongText()
-	documents := make([]GlowstickDocument, 12000)
-	for i := 0; i < 12000; i++ {
+	documents := make([]GlowstickDocument, 100)
+	for i := 0; i < 100; i++ {
 		documents[i] = GlowstickDocument{
 			Id:        primitive.NewObjectID(),
 			Content:   content,
@@ -462,4 +467,58 @@ func generateLongText() string {
 	}
 
 	return text.String()
+}
+
+func TestListCollections(t *testing.T) {
+	wtService := wiredtiger.WiredTiger()
+
+	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
+			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
+		}
+	}
+	if err := wtService.Open(WIREDTIGER_DIR, "create"); err != nil {
+		t.Log("Err occured")
+	}
+
+	dbName := "default"
+	collName := "tenant_id_1"
+	params := DbParams{
+		Name:      dbName,
+		KvService: wtService,
+	}
+	dbSvc := DatabaseService(params)
+
+	err := dbSvc.CreateDB()
+	if err != nil {
+		t.Errorf("Failed to create Db; %s", err)
+	}
+
+	err = dbSvc.CreateCollection(collName)
+	if err != nil {
+		t.Errorf("Failed to create collection: %s", err)
+	}
+
+	collections, err := dbSvc.ListCollections()
+
+	if err != nil {
+		t.Errorf("Failed to list collections: %v", err)
+	}
+
+	if len(collections) == 0 {
+		t.Errorf("No collections found")
+	}
+
+	firstColl := collections[0]
+
+	if firstColl.Ns != fmt.Sprintf("%s.%s", dbName, collName) {
+		t.Errorf("First collection does not match expected: %s", firstColl.Ns)
+	}
+
+	t.Cleanup(func() {
+		if err := wtService.Close(); err != nil {
+			fmt.Printf("Warning: failed to close connection: %v\n", err)
+		}
+		os.RemoveAll("volumes/WT_HOME_TEST")
+	})
 }

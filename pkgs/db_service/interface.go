@@ -31,7 +31,7 @@ type DBService interface {
 	CreateCollection(collection_name string) error
 	InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
-	ListCollections() error
+	ListCollections() ([]CollectionCatalogEntry, error)
 }
 
 type DbParams struct {
@@ -41,5 +41,8 @@ type DbParams struct {
 }
 
 func DatabaseService(params DbParams) DBService {
-	return &GDBService{Name: params.Name, KvService: params.KvService}
+	return &GDBService{
+		Name:      params.Name,
+		KvService: params.KvService,
+	}
 }

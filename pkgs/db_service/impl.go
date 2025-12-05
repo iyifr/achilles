@@ -47,7 +47,9 @@ type CollectionStats struct {
 }
 
 type GDBService struct {
-	Name      string
+	// Database Name
+	Name string
+	// WiredTiger Service
 	KvService wt.WTService
 }
 
@@ -146,6 +148,42 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 
 	return nil
 }
+
+func (s *GDBService) ListCollections() ([]CollectionCatalogEntry, error) {
+	if s.Name == "" {
+		return nil, fmt.Errorf("[GDBSERVICE:ListCollections] database name cannot be empty")
+	}
+
+	// Use sentinel values to scan the entire table
+	startKey := []byte(s.Name + ".")
+	endKey := []byte(s.Name + "/")
+
+	cursor, err := s.KvService.ScanRangeBinary(CATALOG, startKey, endKey)
+	if err != nil {
+		return nil, fmt.Errorf("[GDBSERVICE:ListCollections] failed to scan catalog: %v", err)
+	}
+	defer cursor.Close()
+
+	var collections []CollectionCatalogEntry
+	for cursor.Next() {
+		_, value, err := cursor.Current()
+		if err != nil {
+			return nil, fmt.Errorf("[GDBSERVICE:ListCollections] failed to get current: %v", err)
+		}
+		collectionValue := CollectionCatalogEntry{}
+		if err := bson.Unmarshal(value, &collectionValue); err != nil {
+			return nil, fmt.Errorf("[GDBSERVICE:ListCollections] failed to unmarshal collection catalog: %v", err)
+		}
+		collections = append(collections, collectionValue)
+	}
+
+	if err := cursor.Err(); err != nil {
+		return nil, fmt.Errorf("[GDBSERVICE:ListCollections] cursor error during iteration: %v", err)
+	}
+
+	return collections, nil
+}
+
 func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error {
 	if len(documents) == 0 {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] documents slice cannot be empty")
@@ -171,14 +209,14 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 
 	vectorIndexUri := collection.VectorIndexUri
 
-	var filePath string
+	var vectorIndexFilePath string
 	u, err := url.Parse(vectorIndexUri)
 	if err != nil {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to parse vector index URI: %v", err)
 	}
-	filePath = u.Path
+	vectorIndexFilePath = u.Path
 
-	idx, err := vectr.ReadIndex(filePath)
+	idx, err := vectr.ReadIndex(vectorIndexFilePath)
 	if err != nil {
 		const indexDesc = "Flat"
 		idx, err = vectr.IndexFactory(len(documents[0].Embedding), indexDesc, faiss.MetricL2)
@@ -223,7 +261,6 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 		labelMappings[i] = docIDHex
 	}
 
-	// Insert documents into KV store
 	for i, key := range docKeys {
 		if err := s.KvService.PutBinary(destTableURI, key, docBytes[i]); err != nil {
 			return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to insert document %x: %v", key, err)
@@ -239,6 +276,10 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to add embeddings to index: %v", err)
 	}
 
+	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
+		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to write index to file: %v", err)
+	}
+
 	for i, docIDHex := range labelMappings {
 		label := startLabel + int64(i)
 		if err := s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docIDHex); err != nil {
@@ -246,11 +287,7 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 		}
 	}
 
-	if err := idx.WriteToFile(filePath); err != nil {
-		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to write index to file: %v", err)
-	}
-
-	info, err := os.Stat(filePath)
+	info, err := os.Stat(vectorIndexFilePath)
 	if err != nil {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to stat vector index file: %v", err)
 	}
@@ -258,21 +295,18 @@ func (s *GDBService) InsertDocumentsIntoCollection(collection_name string, docum
 	hot_stats_doc.Doc_Count += int(len(documents))
 	hot_stats_doc.Vector_Index_Size = float64(info.Size())
 
-	bytes, err := bson.Marshal(hot_stats_doc)
+	hot_stats_doc_bytes, err := bson.Marshal(hot_stats_doc)
 	if err != nil {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to marshal hot stats: %v", err)
 	}
 
-	if err := kv.PutBinary(STATS, []byte(collectionDefKey), bytes); err != nil {
+	if err := kv.PutBinary(STATS, []byte(collectionDefKey), hot_stats_doc_bytes); err != nil {
 		return fmt.Errorf("[GDBSERVICE:InsertDocumentsIntoCollection] failed to write hot stats: %v", err)
 	}
 
 	return nil
 }
 
-func (s *GDBService) ListCollections() error {
-	return nil
-}
 func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error) {
 	kv := s.KvService
 	vectr_svc := faiss.FAISS()
@@ -297,26 +331,23 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 	vectorIndexUri := collection.VectorIndexUri
 
-	var filePath string
+	var vectorIndexFilePath string
 	if vectorIndexUri != "" {
 		u, err := url.Parse(vectorIndexUri)
 		if err != nil {
 			return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to parse vector index URI: %v", err)
 		}
-		filePath = u.Path
+		vectorIndexFilePath = u.Path
 	}
 
-	idx, err := vectr_svc.ReadIndex(filePath)
+	idx, err := vectr_svc.ReadIndex(vectorIndexFilePath)
 	defer idx.Free()
 
 	if err != nil {
 		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - could not vector index after specfied file path: %v", err)
 	}
 
-	start := time.Now()
 	distances, ids, err := idx.Search(query.QueryEmbedding, 1, int(query.TopK))
-	searchDuration := time.Since(start)
-	fmt.Printf("Vector index search took: %v\n", searchDuration)
 
 	if err != nil {
 		return nil, fmt.Errorf("[DB_SERVICE:QueryCollection] - failed to search vector index for query embedding")
@@ -441,7 +472,7 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		results[result.index] = result.doc
 	}
 
-	for i := 0; i < len(ids); i++ {
+	for i := range ids {
 		if doc, exists := results[i]; exists {
 			docs = append(docs, doc)
 		}

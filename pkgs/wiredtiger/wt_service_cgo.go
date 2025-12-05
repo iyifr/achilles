@@ -494,19 +494,37 @@ static wt_range_ctx_t* wt_range_scan_init_str(WT_CONNECTION *conn, const char* u
     memset(ctx, 0, sizeof(*ctx));
     ctx->err = 0; ctx->valid = 0; ctx->in_range = 1;
     if (!conn || !uri || !start_key || !end_key) { free(ctx); return NULL; }
+
+    // Validate that keys are not empty to prevent WiredTiger panic
+    if (strlen(start_key) == 0 || strlen(end_key) == 0) {
+        free(ctx);
+        return NULL;
+    }
+
     ctx->session = NULL;
     ctx->cursor = NULL;
     ctx->end_key = strdup(end_key);
+
     // Open session
     int err = conn->open_session(conn, NULL, NULL, &ctx->session);
-    if (err != 0 || !ctx->session) { free(ctx->end_key); free(ctx); return NULL; }
+    if (err != 0 || !ctx->session) {
+        printf("[wt_range_scan_init_str] Failed to open session, error: %d\n", err);
+        free(ctx->end_key); free(ctx); return NULL;
+    }
+    printf("[wt_range_scan_init_str] Session opened successfully\n");
+
     // Open cursor
     err = ctx->session->open_cursor(ctx->session, uri, NULL, NULL, &ctx->cursor);
     if (err != 0 || !ctx->cursor) {
+        printf("[wt_range_scan_init_str] Failed to open cursor, error: %d\n", err);
         ctx->session->close(ctx->session, NULL);
         free(ctx->end_key); free(ctx);
         return NULL;
     }
+
+    printf("[wt_range_scan_init_str] Cursor opened successfully\n");
+    printf("[wt_range_scan_init_str] start_key: %s, end_key: %s\n", start_key, end_key);
+
     // Position at start_key (with search_near pattern)
     ctx->cursor->set_key(ctx->cursor, start_key);
 
@@ -1161,7 +1179,7 @@ func (s *cgoService) CreateTable(name string, config string) error {
 }
 
 // ============================================================================
-// STRING KEY/VALUE OPERATIONS (existing)
+// STRING KEY/VALUE OPERATIONS
 // ============================================================================
 
 func (s *cgoService) PutString(table string, key string, value string) error {
@@ -1345,10 +1363,6 @@ func (s *cgoService) SearchNearBinary(table string, probeKey []byte) ([]byte, []
 	return keyBytes, valBytes, int(exact), true, nil
 }
 
-// ============================================================================
-// STRING OPERATIONS (existing)
-// ============================================================================
-
 func (s *cgoService) SearchNear(table string, probeKey string) (string, string, int, bool, error) {
 	if s.conn == nil {
 		return "", "", 0, false, errors.New("connection not open")
@@ -1431,10 +1445,6 @@ func (s *cgoService) DeleteBinary(table string, key []byte) error {
 	}
 	return nil
 }
-
-// ============================================================================
-// CONVENIENCE HELPER FUNCTIONS
-// ============================================================================
 
 // PutBinaryWithStringKey is a convenience function for composite keys
 // Useful for index operations where key is composite of field values + doc ID
@@ -1597,13 +1607,23 @@ func (s *cgoService) ScanRange(table, startKey, endKey string) (StringRangeCurso
 	if s.conn == nil {
 		return nil, errors.New("connection not open")
 	}
+
+	// Print incoming keys for debugging
+	fmt.Printf("[ScanRange] table: %s, startKey: %s, endKey: %s\n", table, startKey, endKey)
+
 	ctable := C.CString(table)
+	// Validate that keys are not empty to prevent WiredTiger panic
+	if startKey == "" || endKey == "" {
+		return nil, errors.New("start and end keys cannot be empty")
+	}
+
 	cstart := C.CString(startKey)
 	cend := C.CString(endKey)
 	defer C.free(unsafe.Pointer(ctable))
 	defer C.free(unsafe.Pointer(cstart))
 	defer C.free(unsafe.Pointer(cend))
 	ctx := C.wt_range_scan_init_str(s.conn, ctable, cstart, cend)
+	fmt.Printf("ctx: %v\n", ctx)
 	if ctx == nil {
 		return nil, errors.New("failed to initialize string range scan")
 	}
@@ -1620,7 +1640,7 @@ func (s *cgoService) ScanRange(table, startKey, endKey string) (StringRangeCurso
 }
 
 // ============================================================================
-// BINARY RANGE SCAN IMPLEMENTATION
+// BINARY RANGE SCAN
 // ============================================================================
 
 func (s *cgoService) ScanRangeBinary(table string, startKey, endKey []byte) (BinaryRangeCursor, error) {
