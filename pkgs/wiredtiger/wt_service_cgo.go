@@ -7,11 +7,12 @@ package wiredtiger
 #cgo darwin CFLAGS: -I/usr/local/include
 #cgo darwin LDFLAGS: -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lwiredtiger
 #cgo linux CFLAGS: -I/usr/local/include
-#cgo linux LDFLAGS: -L/usr/local/lib -Wl,-rpath,/usr/local/lib -Wl,-rpath,/usr/lib -Wl,-rpath,/usr/lib/x86_64-linux-gnu -lwiredtiger
+#cgo linux LDFLAGS: -L/usr/local/lib -Wl,-rpath,/usr/local/lib -Wl,-rpath,/usr/lib/x86_64-linux-gnu -lwiredtiger
 #include <stdlib.h>
 #include <string.h>
 #include <wiredtiger.h>
 #include <stdio.h>
+#include <errno.h>
 
 // ============================================================================
 // CONNECTION OPERATIONS
@@ -1129,7 +1130,6 @@ static int wt_range_scan_next_batch_bin(wt_range_ctx_bin_t* ctx, size_t max_buf_
 
         int nerr = ctx->cursor->next(ctx->cursor);
         if (nerr != 0) { ctx->valid = 0; break; }
-        // optional: we can peek the next key to short-circuit on end bound in next loop
         if ((size_t)count >= 1000) break; // safety cap per batch
     }
 
@@ -1161,6 +1161,33 @@ type cgoService struct {
 }
 
 func WiredTigerService() WTService { return &cgoService{} }
+
+// Error codes for familiar WiredTiger errors
+var (
+	ErrNotFound      = errors.New("wiredtiger: not found")
+	ErrBusy          = errors.New("wiredtiger: resource busy (EBUSY)")
+	ErrRollback      = errors.New("wiredtiger: rollback conflict")
+	ErrDuplicateKey  = errors.New("wiredtiger: duplicate key")
+	ErrPanic         = errors.New("wiredtiger: panic")
+	ErrWriteConflict = errors.New("wiredtiger: write conflict")
+)
+
+// mapWiretigerError maps integer error codes from WiredTiger to standard Go errors where possible.
+func mapWiretigerError(code C.int) error {
+	switch code {
+	case 0:
+		return nil
+	case -31803: // WT_NOTFOUND
+		return ErrNotFound
+	case -31804: // WT_DUPLICATE_KEY
+		return ErrDuplicateKey
+	case -31805: // WT_ROLLBACK
+		return ErrRollback
+	case C.int(C.EBUSY):
+		return ErrBusy
+	}
+	return fmt.Errorf("wiredtiger error: code=%d", int(code))
+}
 
 // ============================================================================
 // CONNECTION OPERATIONS
@@ -1443,8 +1470,8 @@ func (s *cgoService) PutBinary(table string, key []byte, value []byte) error {
 
 	err := C.wt_put_bin(s.conn, curi, (*C.uchar)(unsafe.Pointer(&key[0])), C.size_t(len(key)),
 		(*C.uchar)(unsafe.Pointer(&value[0])), C.size_t(len(value)))
-	if err != 0 {
-		return fmt.Errorf("wiredtiger binary put failed with error code %d", int(err))
+	if merr := mapWiretigerError(err); merr != nil {
+		return merr
 	}
 	return nil
 }
@@ -1460,8 +1487,11 @@ func (s *cgoService) GetBinary(table string, key []byte) ([]byte, bool, error) {
 
 	var outVal C.WT_ITEM
 	err := C.wt_get_bin(s.conn, curi, (*C.uchar)(unsafe.Pointer(&key[0])), C.size_t(len(key)), &outVal)
-	if err != 0 {
-		return nil, false, fmt.Errorf("wiredtiger binary get failed with error code %d", int(err))
+	if merr := mapWiretigerError(err); merr != nil {
+		if errors.Is(merr, ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, merr
 	}
 
 	if outVal.data == nil {
