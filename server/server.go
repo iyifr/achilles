@@ -35,7 +35,7 @@ func StartServer() {
 		os.Exit(1)
 	}
 
-	// Set up signal handling for graceful shutdown
+	// Signal handling for graceful shutdown
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -49,6 +49,9 @@ func StartServer() {
 
 	r := Router()
 
-	fmt.Println("Server running on http://localhost:8080")
-	fasthttp.ListenAndServe(":8080", r.Handler)
+	fmt.Println("Server running on http://localhost:8180")
+	if err := fasthttp.ListenAndServe(":8180", r.Handler); err != nil {
+		fmt.Printf("Server error: %v\n", err)
+		os.Exit(1)
+	}
 }
