@@ -112,14 +112,14 @@ func TestCreateCollection(t *testing.T) {
 	dbSvc := DatabaseService(params)
 
 	// Create the db
-	err := dbSvc.CreateDB()
+	_, err := dbSvc.CreateDB()
 
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
 	start := time.Now()
-	err = dbSvc.CreateCollection(collName)
+	_, err = dbSvc.CreateCollection(collName)
 	elapsed := time.Since(start)
 	t.Logf("CreateCollection took: %v\n", elapsed)
 
@@ -200,12 +200,12 @@ func TestInsertDocuments(t *testing.T) {
 	dbSvc := DatabaseService(params)
 
 	// Create the db
-	err := dbSvc.CreateDB()
+	_, err := dbSvc.CreateDB()
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
-	err = dbSvc.CreateCollection(collName)
+	_, err = dbSvc.CreateCollection(collName)
 	if err != nil {
 		t.Errorf("Failed to create collection: %s", err)
 	}
@@ -213,7 +213,7 @@ func TestInsertDocuments(t *testing.T) {
 	documents := make([]GlowstickDocument, 100)
 	for i := 0; i < 100; i++ {
 		documents[i] = GlowstickDocument{
-			Id:        primitive.NewObjectID(),
+			Id:        primitive.NewObjectID().Hex(),
 			Content:   fmt.Sprintf("Example document %d", i+1),
 			Embedding: genEmbeddings(1536),
 			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
@@ -221,7 +221,7 @@ func TestInsertDocuments(t *testing.T) {
 	}
 
 	start := time.Now()
-	err = dbSvc.InsertDocumentsIntoCollection(collName, documents)
+	err = dbSvc.InsertDocuments(collName, documents)
 	duration := time.Since(start)
 	fmt.Printf("InsertDocumentsIntoCollection took: %v\n", duration)
 	if err != nil {
@@ -251,17 +251,17 @@ func TestInsertDocuments(t *testing.T) {
 		docKey := doc.Id[:]
 		fmt.Printf("Index: %d, docKey: %x\n", index, docKey)
 
-		record, found, err := wtService.GetBinary(collTableURI, docKey)
+		record, found, err := wtService.GetBinary(collTableURI, []byte(docKey))
 		if err != nil {
-			t.Errorf("failed to read doc _id=%s from table %s: %v", doc.Id.Hex(), collTableURI, err)
+			t.Errorf("failed to read doc _id=%s from table %s: %v", doc.Id, collTableURI, err)
 		}
 		if !found {
-			t.Errorf("inserted doc _id=%s not found in collection physical table %s", doc.Id.Hex(), collTableURI)
+			t.Errorf("inserted doc _id=%s not found in collection physical table %s", doc.Id, collTableURI)
 		}
 
 		var restoredDoc GlowstickDocument
 		if err := bson.Unmarshal(record, &restoredDoc); err != nil {
-			t.Errorf("unmarshal failed for _id=%s: %v", doc.Id.Hex(), err)
+			t.Errorf("unmarshal failed for _id=%s: %v", doc.Id, err)
 		}
 		if doc.Content != restoredDoc.Content {
 			t.Errorf("Retrieved content does not match document saved. Retrieved:%s, Document:%s", restoredDoc.Content, doc.Content)
@@ -322,12 +322,12 @@ func TestBasicVectorQuery(t *testing.T) {
 	dbSvc := DatabaseService(params)
 
 	// Create the db
-	err := dbSvc.CreateDB()
+	_, err := dbSvc.CreateDB()
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
-	err = dbSvc.CreateCollection(collName)
+	_, err = dbSvc.CreateCollection(collName)
 	if err != nil {
 		t.Errorf("Failed to create collection: %s", err)
 	}
@@ -341,14 +341,14 @@ func TestBasicVectorQuery(t *testing.T) {
 	documents := make([]GlowstickDocument, 100)
 	for i := 0; i < 100; i++ {
 		documents[i] = GlowstickDocument{
-			Id:        primitive.NewObjectID(),
+			Id:        primitive.NewObjectID().Hex(),
 			Content:   content,
 			Embedding: genEmbeddings(1536),
 			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
 		}
 	}
 
-	err = dbSvc.InsertDocumentsIntoCollection(collName, documents)
+	err = dbSvc.InsertDocuments(collName, documents)
 	if err != nil {
 		t.Errorf("InsertDocumentsIntoCollection returned error: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestBasicVectorQuery(t *testing.T) {
 	t.Logf("Query returned %d documents:\n", len(docs))
 	for i, doc := range docs {
 		t.Logf("Document %d:\n", i+1)
-		t.Logf("  ID: %s\n", doc.Id.Hex())
+		t.Logf("  ID: %s\n", doc.Id)
 		t.Logf("  Content: %s\n", doc.Content)
 		t.Logf("  Metadata: %+v\n", doc.Metadata)
 		t.Logf("  Embedding length: %d\n", len(doc.Embedding))
@@ -489,14 +489,14 @@ func TestListCollections(t *testing.T) {
 	}
 	dbSvc := DatabaseService(params)
 
-	err := dbSvc.CreateDB()
+	_, err := dbSvc.CreateDB()
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
 	colls := []string{"tenant_id_1", "tenant_id_2", "tenant_id_3"}
 	for _, coll := range colls {
-		err = dbSvc.CreateCollection(coll)
+		_, err = dbSvc.CreateCollection(coll)
 		if err != nil {
 			t.Errorf("Failed to create collection: %s", err)
 		}
