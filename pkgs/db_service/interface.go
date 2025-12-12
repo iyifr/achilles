@@ -2,8 +2,6 @@ package dbservice
 
 import (
 	wt "achillesdb/pkgs/wiredtiger"
-
-	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // TABLE URIS for creating wiredtiger tables
@@ -12,32 +10,33 @@ var STATS = "table:_stats"
 var LABELS_TO_DOC_ID_MAPPING_TABLE_URI = "table:label_docID"
 
 type GlowstickDocument struct {
-	Id        primitive.ObjectID `bson:"_id"`
-	Content   string             `bson:"content"`
-	Embedding []float32          `bson:"embedding"`
-	Metadata  interface{}        `bson:"metadata"` // Any BSON- and JSON-serializable type
+	Id        string                 `bson:"_id"`
+	Content   string                 `bson:"content"`
+	Embedding []float32              `bson:"embedding"`
+	Metadata  map[string]interface{} `bson:"metadata" json:"metadata"`
 }
 
 type QueryStruct struct {
 	TopK           int32
 	MaxDistance    float32
 	QueryEmbedding []float32
-	Filters        map[string]interface{}
+	// Filters        map[string]any
 }
 type CollectionEntry struct {
-	Info      CollectionCatalogEntry
-	Documents []GlowstickDocument
-	Stats     CollectionStats
+	Info      CollectionCatalogEntry `json:"collection"`
+	Documents []GlowstickDocument    `json:"documents"`
+	Stats     CollectionStats        `json:"stats"`
 }
 
 type DBService interface {
-	CreateDB() error
+	CreateDB() (AchillesErrorCode, error)
 	DeleteDB(name string) error
-	CreateCollection(collection_name string) error
-	InsertDocumentsIntoCollection(collection_name string, documents []GlowstickDocument) error
-	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
-	ListCollections() ([]CollectionCatalogEntry, error)
+	CreateCollection(collection_name string) (AchillesErrorCode, error)
 	GetCollection(collection_name string) (CollectionEntry, error)
+	ListCollections() ([]CollectionCatalogEntry, error)
+	InsertDocuments(collection_name string, documents []GlowstickDocument) error
+	GetDocuments(collection_name string) ([]GlowstickDocument, error)
+	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
 }
 
 type DbParams struct {
@@ -52,3 +51,10 @@ func DatabaseService(params DbParams) DBService {
 		KvService: params.KvService,
 	}
 }
+
+type AchillesErrorCode int
+
+const (
+	Err_Db_Exists         AchillesErrorCode = 6767 // hHehehe
+	Err_Collection_Exists AchillesErrorCode = 6768
+)
