@@ -8,6 +8,7 @@ import (
 )
 
 func CreateCollection(ctx *fasthttp.RequestCtx) {
+	var db_name = ctx.UserValue("database_name").(string)
 
 	var requestBody struct {
 		Name string `json:"name"`
@@ -21,14 +22,22 @@ func CreateCollection(ctx *fasthttp.RequestCtx) {
 
 	collection_name := requestBody.Name
 	db := dbservice.DatabaseService(dbservice.DbParams{
-		Name:      "default",
+		Name:      db_name,
 		KvService: wtService,
 	})
+	code, err := db.CreateCollection(collection_name)
 
-	err := db.CreateCollection(collection_name)
+	if code == dbservice.Err_Collection_Exists {
+		ctx.SetStatusCode(fasthttp.StatusConflict)
+		ctx.SetContentType("application/json")
+		ctx.WriteString(`{"error":"Collection already exists"}`)
+		return
+	}
+
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-		ctx.WriteString(err.Error())
+		ctx.SetContentType("application/json")
+		ctx.WriteString(`{"error":"Internal server error"}`)
 		return
 	}
 
