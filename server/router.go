@@ -26,6 +26,7 @@ func Router() *router.Router {
 	apiV1.GET("/database/{database_name}/collections/{collection_name}", GetCollection)
 	apiV1.PUT("/database/{database_name}/collections/{collection_name}/documents", InsertDocumentsHndlr)
 	apiV1.GET("/database/{database_name}/collections/{collection_name}/documents", GetDocumentsHandler)
+	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents", QueryDocumentsHandler)
 	return r
 }
 
@@ -181,6 +182,49 @@ func GetDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	})
 
 	docs, err := db.GetDocuments(collection)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.WriteString(err.Error())
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+
+	jsonBytes, err := json.Marshal(docs)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.WriteString(err.Error())
+		return
+	}
+	ctx.Write(jsonBytes)
+}
+
+func QueryDocumentsHandler(ctx *fasthttp.RequestCtx) {
+
+	var database = ctx.UserValue("database_name").(string)
+	var collection = ctx.UserValue("collection_name").(string)
+	var requestBody struct {
+		TopK           int       `json:"top_k"`
+		QueryEmbedding []float32 `json:"query_embedding"`
+	}
+
+	if err := json.Unmarshal(ctx.Request.Body(), &requestBody); err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.WriteString("Invalid JSON payload")
+		return
+	}
+
+	db := dbservice.DatabaseService(dbservice.DbParams{
+		Name:      database,
+		KvService: wtService,
+	})
+	var data = dbservice.QueryStruct{
+		TopK:           int32(requestBody.TopK),
+		QueryEmbedding: requestBody.QueryEmbedding,
+		MaxDistance:    0,
+	}
+	docs, err := db.QueryCollection(collection, data)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.WriteString(err.Error())
