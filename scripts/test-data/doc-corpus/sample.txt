@@ -1,0 +1,24 @@
+Vector databases are specialized systems designed to store and query high-dimensional vector representations of data.
+These vectors, often called embeddings, capture the semantic meaning of text, images, or other data types.
+Unlike traditional databases that match exact keywords, vector databases enable similarity search, finding items that are semantically close to a query.
+This capability is crucial for applications like semantic search, recommendation systems, and retrieval-augmented generation (RAG) for large language models.
+GlowstickDB aims to provide a performant and flexible solution in this space.
+FastEmbed is a lightweight, fast, Python library for embedding generation.
+It supports various models and is designed for efficiency.
+Combining these tools allows for powerful AI applications.
+The core idea is to map data into a vector space where distance corresponds to similarity.
+Common distance metrics include cosine similarity, Euclidean distance, and dot product.
+Efficient indexing algorithms like HNSW or IVF are used to speed up nearest neighbor search.
+This text is being used to generate test data for the GlowstickDB project.
+We need enough text to create multiple chunks with overlap.
+Testing edge cases like short documents or very long ones is also important.
+Metadata management is another key feature of vector databases, allowing filtering alongside vector search.
+Transaction support ensures data integrity during updates and insertions.
+Concurrency control is vital for high-throughput environments.
+Persistence ensures data is not lost on restart.
+WiredTiger is an underlying storage engine that can be used for such systems.
+Go is a popular language for building high-performance database systems.
+Python is widely used for data processing and AI tasks.
+This ecosystem integration is what we are testing here.
+End of the sample text.
+

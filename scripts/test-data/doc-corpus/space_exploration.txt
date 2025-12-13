@@ -1,0 +1,8 @@
+The James Webb Space Telescope (JWST) has revolutionized our understanding of the cosmos since its launch. Operating primarily in the infrared spectrum, it allows astronomers to peer through cosmic dust clouds that obscure visible light, revealing the birth of stars and planetary systems.
+One of its key missions is to detect light from the earliest galaxies that formed after the Big Bang, effectively looking back in time over 13.5 billion years.
+The telescope's large segmented mirror, protected by a tennis-court-sized sunshield, must be kept at extremely low temperatures to function correctly.
+Recent observations have challenged existing models of galaxy formation, showing that massive galaxies appeared much earlier in the universe's history than previously thought.
+Beyond deep space, JWST also analyzes the atmospheres of exoplanets, searching for biosignatures like water vapor, methane, and carbon dioxide that could indicate habitability.
+Space exploration continues to push boundaries with upcoming missions to Mars and the icy moons of Jupiter and Saturn, seeking signs of life in our own solar system.
+The collaboration between NASA, ESA, and CSA demonstrates the power of international cooperation in scientific advancement.
+
