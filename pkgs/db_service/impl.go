@@ -306,8 +306,7 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 
 		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
 
-		docIDHex := fmt.Sprintf("%x", key)
-		labelMappings[i] = docIDHex
+		labelMappings[i] = key
 	}
 
 	for i, key := range docKeys {
@@ -415,16 +414,11 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 			// Get docID from label mapping
 			val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-			if err != nil || !exists || len(val) != 24 {
+			if err != nil || !exists {
 				continue // Skip on error or invalid length
 			}
 
-			objectID, err := primitive.ObjectIDFromHex(val)
-			if err != nil || objectID.IsZero() {
-				continue // Skip invalid ObjectID
-			}
-
-			docIDBytes := objectID[:]
+			var docIDBytes = []byte(val)
 
 			// Get document from collection table
 			docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
@@ -474,20 +468,15 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 				distance := distances[j]
 
 				// Build key for label->docID mapping lookup
-				key := strconv.FormatInt(id, 10)
+				key := strconv.FormatInt(int64(id), 10)
 
 				// Get docID from label mapping
 				val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-				if err != nil || !exists || len(val) != 24 {
-					continue // Skip on error or invalid length
+				if err != nil || !exists {
+					continue // Skip on error
 				}
 
-				objectID, err := primitive.ObjectIDFromHex(val)
-				if err != nil || objectID.IsZero() {
-					continue // Skip invalid ObjectID
-				}
-
-				docIDBytes := objectID[:]
+				var docIDBytes = []byte(val)
 
 				// Get document from collection table
 				docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
