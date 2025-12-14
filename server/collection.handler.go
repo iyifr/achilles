@@ -25,19 +25,10 @@ func CreateCollection(ctx *fasthttp.RequestCtx) {
 		Name:      db_name,
 		KvService: wtService,
 	})
-	code, err := db.CreateCollection(collection_name)
-
-	if code == dbservice.Err_Collection_Exists {
-		ctx.SetStatusCode(fasthttp.StatusConflict)
-		ctx.SetContentType("application/json")
-		ctx.WriteString(`{"error":"Collection already exists"}`)
-		return
-	}
+	err := db.CreateCollection(collection_name)
 
 	if err != nil {
-		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
-		ctx.SetContentType("application/json")
-		ctx.WriteString(`{"error":"Internal server error"}`)
+		handleError(ctx, err)
 		return
 	}
 
