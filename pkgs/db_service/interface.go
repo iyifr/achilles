@@ -20,7 +20,7 @@ type QueryStruct struct {
 	TopK           int32
 	MaxDistance    float32
 	QueryEmbedding []float32
-	// Filters        map[string]any
+	Filters        map[string]any
 }
 type CollectionEntry struct {
 	Info      CollectionCatalogEntry `json:"collection"`

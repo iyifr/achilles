@@ -432,9 +432,23 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 			}
 
 			// Apply distance filter if specified
-			if query.MaxDistance == 0 || distance < query.MaxDistance {
-				docs = append(docs, doc)
+			if query.MaxDistance != 0 && distance >= query.MaxDistance {
+				continue
 			}
+
+			// Apply metadata filters
+			if query.Filters != nil {
+				matches, err := matchesFilter(doc.Metadata, query.Filters)
+				if err != nil {
+					// Log error or treat as mismatch? Treating as mismatch for safety
+					continue
+				}
+				if !matches {
+					continue
+				}
+			}
+
+			docs = append(docs, doc)
 		}
 		return docs, nil
 	}
@@ -490,9 +504,23 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 				}
 
 				// Apply distance filter if specified
-				if query.MaxDistance == 0 || distance < query.MaxDistance {
-					resultChan <- docResult{doc: doc, index: j}
+				if query.MaxDistance != 0 && distance >= query.MaxDistance {
+					continue
 				}
+
+				// Apply metadata filters
+				if query.Filters != nil {
+					matches, err := matchesFilter(doc.Metadata, query.Filters)
+					if err != nil {
+						// Log error or treat as mismatch? Treating as mismatch for safety
+						continue
+					}
+					if !matches {
+						continue
+					}
+				}
+
+				resultChan <- docResult{doc: doc, index: j}
 			}
 		}(start, end)
 	}

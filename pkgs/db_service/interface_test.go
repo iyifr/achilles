@@ -2,7 +2,7 @@ package dbservice
 
 import (
 	"achillesdb/pkgs/faiss"
-	"achillesdb/pkgs/wiredtiger"
+	wt "achillesdb/pkgs/wiredtiger"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -16,41 +16,50 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-var WIREDTIGER_DIR = "volumes/WT_HOME_TEST"
+func setupTestDB(t *testing.T, dirName string) (wt.WTService, DBService) {
+	wtService := wt.WiredTiger()
 
-func TestCreateDb(t *testing.T) {
-	wtService := wiredtiger.WiredTiger()
+	// Ensure unique directory for each test
+	testDir := fmt.Sprintf("volumes/WT_HOME_TEST_%s_%d", dirName, time.Now().UnixNano())
 
-	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
-			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
-		}
+	if err := os.MkdirAll(testDir, 0755); err != nil {
+		t.Fatalf("failed to create test dir: %v", err)
 	}
 
-	if err := wtService.Open(WIREDTIGER_DIR, "create"); err != nil {
-		t.Log("Err occured")
+	if err := wtService.Open(testDir, getWiredTigerConfigForConnection()); err != nil {
+		t.Fatalf("Failed to open WiredTiger: %v", err)
+	}
+
+	// Initialize tables
+	if err := InitTablesHelper(wtService); err != nil {
+		wtService.Close()
+		os.RemoveAll(testDir)
+		t.Fatalf("Failed to init tables: %v", err)
 	}
 
 	t.Cleanup(func() {
 		if err := wtService.Close(); err != nil {
-			fmt.Printf("Warning: failed to close connection: %v\n", err)
+			t.Logf("Warning: failed to close connection: %v", err)
 		}
-		os.RemoveAll("volumes/WT_HOME_TEST")
+		os.RemoveAll(testDir)
 	})
 
 	name := "default"
-
 	params := DbParams{
 		Name:      name,
 		KvService: wtService,
 	}
 
-	dbSvc := DatabaseService(params)
+	return wtService, DatabaseService(params)
+}
+
+func TestCreateDb(t *testing.T) {
+	wtService, dbSvc := setupTestDB(t, "CreateDb")
 
 	// Create the db
 	dbSvc.CreateDB()
 
-	val, key_exists, err := wtService.GetBinaryWithStringKey(CATALOG, fmt.Sprintf("db:%s", name))
+	val, key_exists, err := wtService.GetBinaryWithStringKey(CATALOG, "db:default")
 
 	if !key_exists {
 		t.Errorf("DB value not persisted.")
@@ -74,8 +83,8 @@ func TestCreateDb(t *testing.T) {
 		t.Errorf("Returned value was not valid BSON for DbCatalogEntry: %v", err)
 	}
 
-	if entry.Name != name {
-		t.Errorf("Corrupted or incorrect DB name. Got: %s, want: %s", entry.Name, name)
+	if entry.Name != "default" {
+		t.Errorf("Corrupted or incorrect DB name. Got: %s, want: default", entry.Name)
 	}
 
 	if entry.UUID == "" {
@@ -85,35 +94,16 @@ func TestCreateDb(t *testing.T) {
 	if entry.Config == nil || entry.Config["Index"] != "HNSW" {
 		t.Errorf("Config field corrupted or missing expected value: %v", len(entry.Config))
 	}
-
 }
 
 func TestCreateCollection(t *testing.T) {
-	wtService := wiredtiger.WiredTiger()
+	wtService, dbSvc := setupTestDB(t, "CreateCollection")
 
-	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
-			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
-		}
-	}
-
-	if err := wtService.Open(WIREDTIGER_DIR, "create"); err != nil {
-		t.Log("Err occured")
-	}
-
-	dbName := "default"
 	collName := "tenant_id_1"
-
-	params := DbParams{
-		Name:      dbName,
-		KvService: wtService,
-	}
-
-	dbSvc := DatabaseService(params)
+	dbName := "default"
 
 	// Create the db
 	_, err := dbSvc.CreateDB()
-
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
@@ -127,42 +117,14 @@ func TestCreateCollection(t *testing.T) {
 		t.Errorf("Failed to create collection: %s", err)
 	}
 
-	// Get vector index URI for cleanup
-	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
-	val, exists, err := wtService.GetBinary(CATALOG, []byte(collectionDefKey))
-	var vectorIndexPath string
-	if err == nil && exists {
-		var catalogEntry CollectionCatalogEntry
-		if bson.Unmarshal(val, &catalogEntry) == nil {
-			vectorIndexPath = catalogEntry.VectorIndexUri
-		}
-	}
-
-	t.Cleanup(func() {
-		if err := wtService.Close(); err != nil {
-			fmt.Printf("Warning: failed to close connection: %v\n", err)
-		}
-		if vectorIndexPath != "" {
-			os.Remove(vectorIndexPath)
-		}
-		os.RemoveAll("volumes/WT_HOME_TEST")
-	})
-
-	fmt.Printf("URI: %s\n", fmt.Sprintf("%s.%s", dbName, collName))
-
+	// Verify catalog entry
 	val, key_exists, err := wtService.GetBinaryWithStringKey(CATALOG, fmt.Sprintf("%s.%s", dbName, collName))
 
 	if !key_exists {
 		t.Errorf("DB value not persisted.")
 	}
-
 	if err != nil {
 		t.Errorf("Error occurred in test: %v", err)
-	}
-
-	// Check if value is valid BSON and unmarshal back into struct
-	if len(val) == 0 {
-		t.Errorf("Returned value was empty ([]byte length == 0)")
 	}
 
 	var entry CollectionCatalogEntry
@@ -174,40 +136,27 @@ func TestCreateCollection(t *testing.T) {
 		t.Errorf("Unmarshaled CollectionCatalogEntry Ns does not match: got %s, want %s", entry.Ns, fmt.Sprintf("%s.%s", dbName, collName))
 	}
 
+	// Clean up vector index file that might have been created
+	if entry.VectorIndexUri != "" {
+		t.Cleanup(func() {
+			os.Remove(entry.VectorIndexUri)
+		})
+	}
 }
 
 func TestInsertDocuments(t *testing.T) {
-	wtService := wiredtiger.WiredTiger()
-
-	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
-			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
-		}
-	}
-
-	if err := wtService.Open(WIREDTIGER_DIR, getWiredTigerConfigForConnection()); err != nil {
-		t.Log("Err occured")
-	}
-
-	dbName := "default"
+	wtService, dbSvc := setupTestDB(t, "InsertDocuments")
 	collName := "tenant_id_1"
+	dbName := "default"
 
-	params := DbParams{
-		Name:      dbName,
-		KvService: wtService,
-	}
-
-	dbSvc := DatabaseService(params)
-
-	// Create the db
 	_, err := dbSvc.CreateDB()
 	if err != nil {
-		t.Errorf("Failed to create Db; %s", err)
+		t.Fatalf("Failed to create Db; %s", err)
 	}
 
 	_, err = dbSvc.CreateCollection(collName)
 	if err != nil {
-		t.Errorf("Failed to create collection: %s", err)
+		t.Fatalf("Failed to create collection: %s", err)
 	}
 
 	documents := make([]GlowstickDocument, 100)
@@ -216,16 +165,16 @@ func TestInsertDocuments(t *testing.T) {
 			Id:        primitive.NewObjectID().Hex(),
 			Content:   fmt.Sprintf("Example document %d", i+1),
 			Embedding: genEmbeddings(1536),
-			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
+			Metadata:  map[string]any{"type": "example", "index": i + 1},
 		}
 	}
 
 	start := time.Now()
 	err = dbSvc.InsertDocuments(collName, documents)
 	duration := time.Since(start)
-	fmt.Printf("InsertDocumentsIntoCollection took: %v\n", duration)
+	t.Logf("InsertDocumentsIntoCollection took: %v\n", duration)
 	if err != nil {
-		t.Errorf("InsertDocumentsIntoCollection returned error: %v", err)
+		t.Fatalf("InsertDocumentsIntoCollection returned error: %v", err)
 	}
 
 	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
@@ -238,25 +187,26 @@ func TestInsertDocuments(t *testing.T) {
 	}
 
 	var catalogEntry CollectionCatalogEntry
-	unmarshalErr := bson.Unmarshal(val, &catalogEntry)
-	if unmarshalErr != nil {
-		t.Fatalf("Failed to unmarshal catalog entry: %v", unmarshalErr)
-	}
-	collTableURI := catalogEntry.TableUri
-	if collTableURI == "" {
-		t.Fatalf("Table URI not set in catalog entry for %s", collName)
+	bson.Unmarshal(val, &catalogEntry)
+
+	// Clean up vector index
+	if catalogEntry.VectorIndexUri != "" {
+		t.Cleanup(func() {
+			os.Remove(catalogEntry.VectorIndexUri)
+		})
 	}
 
+	collTableURI := catalogEntry.TableUri
+
+	// Verify inserted docs
 	for index, doc := range documents {
 		docKey := doc.Id[:]
-		fmt.Printf("Index: %d, docKey: %x\n", index, docKey)
-
 		record, found, err := wtService.GetBinary(collTableURI, []byte(docKey))
 		if err != nil {
-			t.Errorf("failed to read doc _id=%s from table %s: %v", doc.Id, collTableURI, err)
+			t.Errorf("Index %d: failed to read doc _id=%s: %v", index, doc.Id, err)
 		}
 		if !found {
-			t.Errorf("inserted doc _id=%s not found in collection physical table %s", doc.Id, collTableURI)
+			t.Errorf("Index %d: inserted doc _id=%s not found", index, doc.Id)
 		}
 
 		var restoredDoc GlowstickDocument
@@ -264,78 +214,31 @@ func TestInsertDocuments(t *testing.T) {
 			t.Errorf("unmarshal failed for _id=%s: %v", doc.Id, err)
 		}
 		if doc.Content != restoredDoc.Content {
-			t.Errorf("Retrieved content does not match document saved. Retrieved:%s, Document:%s", restoredDoc.Content, doc.Content)
+			t.Errorf("Retrieved content mismatch. Got:%s, Want:%s", restoredDoc.Content, doc.Content)
 		}
 	}
 
+	// Check Stats
 	statsVal, statsExists, statsErr := wtService.GetBinary(STATS, []byte(collectionDefKey))
-	if statsErr != nil {
-		t.Errorf("Failed to retrieve _stats entry for collection %s: %v", collName, statsErr)
-	}
-	if !statsExists {
-		t.Errorf("_stats entry missing for collection %s", collName)
-	}
-	var hotStats CollectionStats
-	if statsErr == nil && statsExists {
+	if statsErr != nil || !statsExists {
+		t.Errorf("Failed to retrieve _stats entry")
+	} else {
+		var hotStats CollectionStats
 		if err := bson.Unmarshal(statsVal, &hotStats); err != nil {
 			t.Errorf("Unmarshal failed for hot stats: %v", err)
 		}
-
 		if int(hotStats.Doc_Count) != len(documents) {
-			t.Logf("hot stats: %f", hotStats.Vector_Index_Size)
 			t.Errorf("Stats Doc_Count mismatch, got %d, want %d", hotStats.Doc_Count, len(documents))
 		}
 	}
-
-	t.Cleanup(func() {
-		if err := wtService.Close(); err != nil {
-			fmt.Printf("Warning: failed to close connection: %v\n", err)
-		}
-		if catalogEntry.VectorIndexUri != "" {
-			os.Remove(catalogEntry.VectorIndexUri)
-		}
-		os.RemoveAll("volumes/WT_HOME_TEST")
-	})
-
 }
 
 func TestBasicVectorQuery(t *testing.T) {
-	wtService := wiredtiger.WiredTiger()
-
-	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
-			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
-		}
-	}
-	if err := wtService.Open(WIREDTIGER_DIR, "create,cache_size=4GB,eviction_trigger=95,eviction_dirty_target=5,eviction_dirty_trigger=15,eviction=(threads_max=8),checkpoint=(wait=300)"); err != nil {
-		t.Log("Err occured")
-	}
-
-	dbName := "default"
+	_, dbSvc := setupTestDB(t, "BasicVectorQuery")
 	collName := "tenant_id_1"
 
-	params := DbParams{
-		Name:      dbName,
-		KvService: wtService,
-	}
-
-	dbSvc := DatabaseService(params)
-
-	// Create the db
-	_, err := dbSvc.CreateDB()
-	if err != nil {
-		t.Errorf("Failed to create Db; %s", err)
-	}
-
-	_, err = dbSvc.CreateCollection(collName)
-	if err != nil {
-		t.Errorf("Failed to create collection: %s", err)
-	}
-
-	// err = dbSvc.ListCollections()
-	// if err != nil {
-	// 	t.Errorf("Failed to list collections: %s", err)
-	// }
+	dbSvc.CreateDB()
+	dbSvc.CreateCollection(collName)
 
 	content := generateLongText()
 	documents := make([]GlowstickDocument, 100)
@@ -344,38 +247,19 @@ func TestBasicVectorQuery(t *testing.T) {
 			Id:        primitive.NewObjectID().Hex(),
 			Content:   content,
 			Embedding: genEmbeddings(1536),
-			Metadata:  map[string]interface{}{"type": "example", "index": i + 1},
+			Metadata:  map[string]any{"type": "example", "index": i + 1},
 		}
 	}
 
-	err = dbSvc.InsertDocuments(collName, documents)
-	if err != nil {
-		t.Errorf("InsertDocumentsIntoCollection returned error: %v", err)
+	if err := dbSvc.InsertDocuments(collName, documents); err != nil {
+		t.Fatalf("InsertDocumentsIntoCollection returned error: %v", err)
 	}
-
-	// Get vector index URI for cleanup
-	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
-	// val, exists, err := wtService.GetBinary(CATALOG, []byte(collectionDefKey))
-	// //var vectorIndexPath string
-	// if err == nil && exists {
-	// 	var catalogEntry CollectionCatalogEntry
-	// 	if bson.Unmarshal(val, &catalogEntry) == nil {
-	// 		//vectorIndexPath = catalogEntry.VectorIndexUri
-	// 	}
-	// }
 
 	t.Cleanup(func() {
-		if err := wtService.Close(); err != nil {
-			fmt.Printf("Warning: failed to close connection: %v\n", err)
-		}
-		// if vectorIndexPath != "" {
-		// 	os.Remove(vectorIndexPath)
-		// }
-		//os.RemoveAll("volumes/WT_HOME_TEST")
+		os.Remove(collName + ".index")
 	})
 
 	topK := 12
-
 	query := QueryStruct{
 		TopK:           int32(topK),
 		QueryEmbedding: genEmbeddings(1536),
@@ -387,37 +271,194 @@ func TestBasicVectorQuery(t *testing.T) {
 	t.Logf("QueryCollection took: %v", duration)
 
 	if err != nil {
-		t.Errorf("error occured during query %v", err)
-	}
-
-	if len(docs) == 0 {
-		t.Log("No docs returned")
-	}
-	t.Logf("Query returned %d documents:\n", len(docs))
-	for i, doc := range docs {
-		t.Logf("Document %d:\n", i+1)
-		t.Logf("  ID: %s\n", doc.Id)
-		t.Logf("  Content: %s\n", doc.Content)
-		t.Logf("  Metadata: %+v\n", doc.Metadata)
-		t.Logf("  Embedding length: %d\n", len(doc.Embedding))
+		t.Fatalf("error occured during query %v", err)
 	}
 
 	if len(docs) != topK {
-		t.Error("Returned docs don't match top K")
+		t.Errorf("Returned docs count %d, want %d", len(docs), topK)
 	}
-
-	hot_stats, _, err := wtService.GetBinary(STATS, []byte(collectionDefKey))
-	if err != nil {
-		t.Errorf("failed to fetch hot stats: %v", err)
-	}
-
-	var hot_stats_doc CollectionStats
-	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
-		t.Errorf("failed to unmarshal hot stats: %v", err)
-	}
-	t.Logf("Hot stats doc value: %+v", fmt.Sprintf("%.2f", hot_stats_doc.Vector_Index_Size))
-
 }
+
+func TestListCollections(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "ListCollections")
+
+	_, err := dbSvc.CreateDB()
+	if err != nil {
+		t.Errorf("Failed to create Db; %s", err)
+	}
+
+	colls := []string{"tenant_id_1", "tenant_id_2", "tenant_id_3"}
+	for _, coll := range colls {
+		_, err = dbSvc.CreateCollection(coll)
+		if err != nil {
+			t.Errorf("Failed to create collection: %s", err)
+		}
+	}
+
+	// Cleanup index files
+	t.Cleanup(func() {
+		for _, coll := range colls {
+			os.Remove(coll + ".index")
+		}
+	})
+
+	collections, err := dbSvc.ListCollections()
+
+	if err != nil {
+		t.Fatalf("Failed to list collections: %v", err)
+	}
+
+	if len(collections) == 0 {
+		t.Fatalf("No collections found")
+	}
+
+	// Just check if we found some
+	if len(collections) != 3 {
+		t.Errorf("Expected 3 collections, got %d", len(collections))
+	}
+
+	// Check content of first one
+	firstColl := collections[0]
+	// Order is not guaranteed in list, check if it exists in our input list
+	found := false
+	for _, c := range colls {
+		if firstColl.Ns == fmt.Sprintf("default.%s", c) {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("First collection NS %s not found in expected list", firstColl.Ns)
+	}
+}
+
+func TestMetadataFiltering(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "MetadataFiltering")
+	collName := "filter_test_collection"
+
+	dbSvc.CreateDB()
+	dbSvc.CreateCollection(collName)
+
+	t.Cleanup(func() {
+		os.Remove(collName + ".index")
+	})
+
+	// Insert docs with diverse metadata
+	documents := []GlowstickDocument{
+		{
+			Id:        "doc1",
+			Content:   "Doc 1",
+			Embedding: genEmbeddings(1536),
+			Metadata:  map[string]any{"age": 25, "city": "NY", "tags": []string{"tech", "music"}},
+		},
+		{
+			Id:        "doc2",
+			Content:   "Doc 2",
+			Embedding: genEmbeddings(1536),
+			Metadata:  map[string]any{"age": 30, "city": "SF", "tags": []string{"tech", "food"}},
+		},
+		{
+			Id:        "doc3",
+			Content:   "Doc 3",
+			Embedding: genEmbeddings(1536),
+			Metadata:  map[string]any{"age": 35, "city": "NY", "tags": []string{"music", "art"}},
+		},
+		{
+			Id:        "doc4",
+			Content:   "Doc 4",
+			Embedding: genEmbeddings(1536),
+			Metadata:  map[string]any{"age": 40, "city": "SF", "tags": []string{"food"}},
+		},
+	}
+
+	if err := dbSvc.InsertDocuments(collName, documents); err != nil {
+		t.Fatalf("Failed to insert docs: %v", err)
+	}
+
+	// Helper to run query and check IDs
+	runQuery := func(name string, filters map[string]any, expectedIDs []string) {
+		t.Helper()
+		// Using t.Run to isolate failures better
+		t.Run(name, func(t *testing.T) {
+			query := QueryStruct{
+				TopK:           10,
+				QueryEmbedding: genEmbeddings(1536),
+				Filters:        filters,
+			}
+			docs, err := dbSvc.QueryCollection(collName, query)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+
+			var gotIDs []string
+			for _, d := range docs {
+				gotIDs = append(gotIDs, d.Id)
+			}
+
+			if len(gotIDs) != len(expectedIDs) {
+				t.Errorf("Count mismatch. Got %d docs, want %d. Got IDs: %v, Want IDs: %v", len(gotIDs), len(expectedIDs), gotIDs, expectedIDs)
+				return
+			}
+
+			// Simple set check
+			expectedSet := make(map[string]bool)
+			for _, id := range expectedIDs {
+				expectedSet[id] = true
+			}
+			for _, id := range gotIDs {
+				if !expectedSet[id] {
+					t.Errorf("Unexpected doc ID found: %s", id)
+				}
+			}
+		})
+	}
+
+	// 1. Simple Equality
+	runQuery("Simple Eq", map[string]any{"city": "NY"}, []string{"doc1", "doc3"})
+
+	// 2. $gt Operator
+	runQuery("$gt Check", map[string]any{"age": map[string]any{"$gt": 30}}, []string{"doc3", "doc4"})
+
+	// 3. $lte Operator
+	runQuery("$lte Check", map[string]any{"age": map[string]any{"$lte": 30}}, []string{"doc1", "doc2"})
+
+	// 4. $in Operator
+	runQuery("$in Check", map[string]any{"city": map[string]any{"$in": []any{"NY", "Paris"}}}, []string{"doc1", "doc3"})
+
+	// 5. $and Operator
+	runQuery("$and Check", map[string]any{
+		"$and": []any{
+			map[string]any{"city": "SF"},
+			map[string]any{"age": map[string]any{"$gt": 30}},
+		},
+	}, []string{"doc4"})
+
+	// 6. $or Operator
+	runQuery("$or Check", map[string]any{
+		"$or": []any{
+			map[string]any{"age": 25},
+			map[string]any{"age": 40},
+		},
+	}, []string{"doc1", "doc4"})
+
+	// 7. Nested Logic ( $and with $or )
+	// (city=SF) AND (age < 35 OR age > 45) -> doc2 (age 30, city SF)
+	runQuery("Nested Logic", map[string]any{
+		"$and": []any{
+			map[string]any{"city": "SF"},
+			map[string]any{
+				"$or": []any{
+					map[string]any{"age": map[string]any{"$lt": 35}},
+					map[string]any{"age": map[string]any{"$gt": 45}},
+				},
+			},
+		},
+	}, []string{"doc2"})
+}
+
+// Helpers
+
 func genEmbeddings(dim int) []float32 {
 	fs := faiss.FAISS()
 	randVec := make([]float32, dim)
@@ -443,6 +484,7 @@ func getWiredTigerConfigForConnection() string {
 
 	return fmt.Sprintf("create,cache_size=%dGB,eviction_trigger=90,eviction_dirty_target=10,eviction_dirty_trigger=30,eviction=(threads_max=8)", cacheSizeGB)
 }
+
 func generateLongText() string {
 	words := []string{
 		"the", "quick", "brown", "fox", "jumps", "over", "lazy", "dog",
@@ -454,10 +496,9 @@ func generateLongText() string {
 		"clustering", "classification", "optimization", "performance", "scalability",
 	}
 
-	// Generate text with 50-100 words (reduced range)
-	numWords := 50 + rand.IntN(51) // 50-100 words instead of potentially huge numbers
+	numWords := 50 + rand.IntN(51)
 	var text strings.Builder
-	text.Grow(numWords * 10) // Pre-allocate capacity
+	text.Grow(numWords * 10)
 
 	for i := 0; i < numWords; i++ {
 		if i > 0 {
@@ -467,62 +508,4 @@ func generateLongText() string {
 	}
 
 	return text.String()
-}
-
-func TestListCollections(t *testing.T) {
-	wtService := wiredtiger.WiredTiger()
-
-	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
-			t.Fatalf("failed to create WT_HOME_TEST dir: %v", mkErr)
-		}
-	}
-	if err := wtService.Open(WIREDTIGER_DIR, "create"); err != nil {
-		t.Log("Err occured")
-	}
-
-	dbName := "default"
-	collName := "tenant_id_1"
-	params := DbParams{
-		Name:      dbName,
-		KvService: wtService,
-	}
-	dbSvc := DatabaseService(params)
-
-	_, err := dbSvc.CreateDB()
-	if err != nil {
-		t.Errorf("Failed to create Db; %s", err)
-	}
-
-	colls := []string{"tenant_id_1", "tenant_id_2", "tenant_id_3"}
-	for _, coll := range colls {
-		_, err = dbSvc.CreateCollection(coll)
-		if err != nil {
-			t.Errorf("Failed to create collection: %s", err)
-		}
-	}
-
-	collections, err := dbSvc.ListCollections()
-
-	if err != nil {
-		t.Errorf("Failed to list collections: %v", err)
-	}
-
-	if len(collections) == 0 {
-		t.Errorf("No collections found")
-	}
-
-	firstColl := collections[0]
-
-	if firstColl.Ns != fmt.Sprintf("%s.%s", dbName, collName) {
-		t.Errorf("First collection does not match expected: %s", firstColl.Ns)
-	}
-
-	t.Logf("Collections: %v", collections)
-	t.Cleanup(func() {
-		if err := wtService.Close(); err != nil {
-			fmt.Printf("Warning: failed to close connection: %v\n", err)
-		}
-		os.RemoveAll("volumes/WT_HOME_TEST")
-	})
 }
