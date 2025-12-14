@@ -22,12 +22,12 @@ type DbCatalogEntry struct {
 
 type CollectionIndex struct {
 	Id   string                 `bson:"_id"`
-	Key  map[string]int         `bson:"key"` // field name -> sort order/type (e.g., 1 for asc, -1 for desc)
+	Key  map[string]int         `bson:"key"`
 	Name string                 `bson:"name"`
-	Ns   string                 `bson:"ns"`             // namespace: "db.collection"
-	Type string                 `bson:"type"`           // index type, e.g., "single", "2dsphere", etc.
-	V    int                    `bson:"v"`              // version number
-	Opts map[string]interface{} `bson:"opts,omitempty"` // additional index options, optional
+	Ns   string                 `bson:"ns"`
+	Type string                 `bson:"type"`
+	V    int                    `bson:"v"`
+	Opts map[string]interface{} `bson:"opts,omitempty"`
 }
 
 type CollectionCatalogEntry struct {
@@ -47,9 +47,7 @@ type CollectionStats struct {
 }
 
 type GDBService struct {
-	// Database Name
 	Name string
-	// WiredTiger Service
 	KvService wt.WTService
 }
 
@@ -71,7 +69,6 @@ func (s *GDBService) CreateDB() (AchillesErrorCode, error) {
 		return 1, err
 	}
 
-	// Check if database already exists
 	dbKey := fmt.Sprintf("db:%s", s.Name)
 	_, exists, _ := s.KvService.GetBinaryWithStringKey(CATALOG, dbKey)
 
@@ -112,7 +109,6 @@ func (s *GDBService) CreateCollection(collection_name string) (AchillesErrorCode
 		UpdatedAt:      primitive.NewDateTimeFromTime(time.Now()),
 	}
 
-	// Throw err on duplicate name
 	exists, err := s.KvService.TableExists(collectionTableUri)
 	if err != nil {
 		return 1, fmt.Errorf("[GDBSERVICE:CreateCollection] failed to check if table exists %s: %v", collectionTableUri, err)
@@ -137,8 +133,6 @@ func (s *GDBService) CreateCollection(collection_name string) (AchillesErrorCode
 		return 1, fmt.Errorf("[GDBSERVICE:CreateCollection] failed to write catalog entry: %v", err)
 	}
 
-	// STATS
-	// Create entry in hot stats table
 	statsEntry := CollectionStats{
 		Doc_Count:         0,
 		Vector_Index_Size: 0,
@@ -162,7 +156,6 @@ func (s *GDBService) ListCollections() ([]CollectionCatalogEntry, error) {
 		return nil, fmt.Errorf("[GDBSERVICE:ListCollections] database name cannot be empty")
 	}
 
-	// Use sentinel values to scan the entire table
 	startKey := []byte(s.Name + ".")
 	endKey := []byte(s.Name + "/")
 
@@ -213,7 +206,6 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 		return CollectionEntry{}, fmt.Errorf("[GDBSERVICE:GetCollection] failed to unmarshal collection catalog: %v", err)
 	}
 
-	// Get collection stats
 	statsVal, statsExists, statsErr := s.KvService.GetBinary(STATS, []byte(collectionDefKey))
 	var stats CollectionStats
 	if statsErr == nil && statsExists {
@@ -409,38 +401,32 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		for i, id := range ids {
 			distance := distances[i]
 
-			// Build key for label->docID mapping lookup
 			key := strconv.FormatInt(int64(id), 10)
 
-			// Get docID from label mapping
 			val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
 			if err != nil || !exists {
-				continue // Skip on error or invalid length
+				continue
 			}
 
 			var docIDBytes = []byte(val)
 
-			// Get document from collection table
 			docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
 			if err != nil || !exists || len(docBin) == 0 {
-				continue // Skip on error or missing document
+				continue
 			}
 
 			var doc GlowstickDocument
 			if err := bson.Unmarshal(docBin, &doc); err != nil {
-				continue // Skip on unmarshal error
+				continue
 			}
 
-			// Apply distance filter if specified
 			if query.MaxDistance != 0 && distance >= query.MaxDistance {
 				continue
 			}
 
-			// Apply metadata filters
 			if query.Filters != nil {
 				matches, err := matchesFilter(doc.Metadata, query.Filters)
 				if err != nil {
-					// Log error or treat as mismatch? Treating as mismatch for safety
 					continue
 				}
 				if !matches {
@@ -476,43 +462,36 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		go func(startIdx, endIdx int) {
 			defer wg.Done()
 
-			// Process chunk of IDs
 			for j := startIdx; j < endIdx; j++ {
 				id := ids[j]
 				distance := distances[j]
 
-				// Build key for label->docID mapping lookup
 				key := strconv.FormatInt(int64(id), 10)
 
-				// Get docID from label mapping
 				val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
 				if err != nil || !exists {
-					continue // Skip on error
+					continue
 				}
 
 				var docIDBytes = []byte(val)
 
-				// Get document from collection table
 				docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
 				if err != nil || !exists || len(docBin) == 0 {
-					continue // Skip on error or missing document
+					continue
 				}
 
 				var doc GlowstickDocument
 				if err := bson.Unmarshal(docBin, &doc); err != nil {
-					continue // Skip on unmarshal error
+					continue
 				}
 
-				// Apply distance filter if specified
 				if query.MaxDistance != 0 && distance >= query.MaxDistance {
 					continue
 				}
 
-				// Apply metadata filters
 				if query.Filters != nil {
 					matches, err := matchesFilter(doc.Metadata, query.Filters)
 					if err != nil {
-						// Log error or treat as mismatch? Treating as mismatch for safety
 						continue
 					}
 					if !matches {
@@ -530,7 +509,6 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		close(resultChan)
 	}()
 
-	// Goroutines may complete in any order, so we need to use a map to collect results that preserve order from faiss search results.
 	results := make(map[int]GlowstickDocument)
 	for result := range resultChan {
 		results[result.index] = result.doc
@@ -559,7 +537,6 @@ func (s *GDBService) GetDocuments(collection_name string) ([]GlowstickDocument, 
 		return nil, fmt.Errorf("[GDBSERVICE:GetDocumentsFromCollection] failed to unmarshal collection catalog: %v", err)
 	}
 
-	// Scan all documents in the collection table using range scan
 	cursor, err := kv.ScanRangeBinary(collection.TableUri, []byte(""), []byte("~"))
 	if err != nil {
 		return nil, fmt.Errorf("[GDBSERVICE:GetDocumentsFromCollection] failed to scan collection table: %v", err)
@@ -609,11 +586,3 @@ func InitTablesHelper(wtService wt.WTService) error {
 
 	return nil
 }
-
-// func float64SliceToFloat32(xs []float64) []float32 {
-// 	result := make([]float32, len(xs))
-// 	for i, v := range xs {
-// 		result[i] = float32(v)
-// 	}
-// 	return result
-// }
