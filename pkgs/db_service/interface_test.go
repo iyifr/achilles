@@ -103,13 +103,13 @@ func TestCreateCollection(t *testing.T) {
 	dbName := "default"
 
 	// Create the db
-	_, err := dbSvc.CreateDB()
+	err := dbSvc.CreateDB()
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
 	start := time.Now()
-	_, err = dbSvc.CreateCollection(collName)
+	err = dbSvc.CreateCollection(collName)
 	elapsed := time.Since(start)
 	t.Logf("CreateCollection took: %v\n", elapsed)
 
@@ -149,12 +149,12 @@ func TestInsertDocuments(t *testing.T) {
 	collName := "tenant_id_1"
 	dbName := "default"
 
-	_, err := dbSvc.CreateDB()
+	err := dbSvc.CreateDB()
 	if err != nil {
 		t.Fatalf("Failed to create Db; %s", err)
 	}
 
-	_, err = dbSvc.CreateCollection(collName)
+	err = dbSvc.CreateCollection(collName)
 	if err != nil {
 		t.Fatalf("Failed to create collection: %s", err)
 	}
@@ -282,14 +282,14 @@ func TestBasicVectorQuery(t *testing.T) {
 func TestListCollections(t *testing.T) {
 	_, dbSvc := setupTestDB(t, "ListCollections")
 
-	_, err := dbSvc.CreateDB()
+	err := dbSvc.CreateDB()
 	if err != nil {
 		t.Errorf("Failed to create Db; %s", err)
 	}
 
 	colls := []string{"tenant_id_1", "tenant_id_2", "tenant_id_3"}
 	for _, coll := range colls {
-		_, err = dbSvc.CreateCollection(coll)
+		err = dbSvc.CreateCollection(coll)
 		if err != nil {
 			t.Errorf("Failed to create collection: %s", err)
 		}

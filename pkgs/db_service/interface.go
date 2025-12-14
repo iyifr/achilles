@@ -28,15 +28,22 @@ type CollectionEntry struct {
 	Stats     CollectionStats        `json:"stats"`
 }
 
+type DocUpdatePayload struct {
+	DocumentId string
+	Where      map[string]any
+	Updates    map[string]any
+}
+
 type DBService interface {
-	CreateDB() (AchillesErrorCode, error)
+	CreateDB() error
 	DeleteDB(name string) error
-	CreateCollection(collection_name string) (AchillesErrorCode, error)
-	GetCollection(collection_name string) (CollectionEntry, error)
 	ListCollections() ([]CollectionCatalogEntry, error)
+	CreateCollection(collection_name string) error
+	GetCollection(collection_name string) (CollectionEntry, error)
 	InsertDocuments(collection_name string, documents []GlowstickDocument) error
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
+	UpdateDocuments(collection_name string, payload *DocUpdatePayload) error
 }
 
 type DbParams struct {
@@ -51,10 +58,3 @@ func DatabaseService(params DbParams) DBService {
 		KvService: params.KvService,
 	}
 }
-
-type AchillesErrorCode int
-
-const (
-	Err_Db_Exists         AchillesErrorCode = 6767 // hHehehe
-	Err_Collection_Exists AchillesErrorCode = 6768
-)
