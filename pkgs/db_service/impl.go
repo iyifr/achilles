@@ -99,7 +99,7 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 		Id:             collectionId,
 		Ns:             collectionKey,
 		TableUri:       collectionTableUri,
-		VectorIndexUri: fmt.Sprintf("%s%s", collection_name, ".index"),
+		VectorIndexUri: fmt.Sprintf("%s/%s%s", VECTORS_FILE_PATH, collection_name, ".index"),
 		CreatedAt:      primitive.NewDateTimeFromTime(time.Now()),
 		UpdatedAt:      primitive.NewDateTimeFromTime(time.Now()),
 	}
@@ -224,6 +224,7 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 	if len(documents) == 0 {
 		return InvalidInput_Err(ErrEmptyDocuments)
 	}
+
 	kv := s.KvService
 	vectr := faiss.FAISS()
 
@@ -243,14 +244,7 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
-	vectorIndexUri := collection.VectorIndexUri
-
-	var vectorIndexFilePath string
-	u, err := url.Parse(vectorIndexUri)
-	if err != nil {
-		return Internal_Err(Wrap_Err(err, "failed to parse vector index URI"))
-	}
-	vectorIndexFilePath = u.Path
+	vectorIndexFilePath := collection.VectorIndexUri
 
 	idx, err := vectr.ReadIndex(vectorIndexFilePath)
 	if err != nil {
@@ -261,50 +255,65 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		}
 	}
 
-	hot_stats, _, err := kv.GetBinary(STATS, []byte(collectionDefKey))
-	if err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to fetch hot stats"))
-	}
-
-	var hot_stats_doc CollectionStats
-	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
-		return Serialization_Err(Wrap_Err(err, "failed to unmarshal hot stats"))
-	}
-
 	destTableURI := collection.TableUri
 
-	numDocs := len(documents)
-	embeddingDim := len(documents[0].Embedding)
+	// Batch processing for large inserts
+	const batchSize = 1000
+	numBatches := (len(documents) + batchSize - 1) / batchSize
 
-	embeddings := make([]float32, numDocs*embeddingDim)
-	docKeys := make([][]byte, numDocs)
-	docBytes := make([][]byte, numDocs)
-	labelMappings := make([]string, numDocs)
-
-	for i, doc := range documents {
-		doc_bytes, err := bson.Marshal(doc)
-		if err != nil {
-			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
-		}
-
-		key := doc.Id
-		docKeys[i] = []byte(key)
-		docBytes[i] = doc_bytes
-
-		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
-
-		labelMappings[i] = key
-	}
-
-	for i, key := range docKeys {
-		if err := s.KvService.PutBinary(destTableURI, key, docBytes[i]); err != nil {
-			return Storage_Err(Wrap_Err(err, "failed to insert document %x", key))
-		}
-	}
+	var wg sync.WaitGroup
+	errChan := make(chan error, numBatches)
 
 	startLabel, err := idx.NTotal()
 	if err != nil {
 		return Internal_Err(Wrap_Err(err, "failed to get index size"))
+	}
+
+	for batchIdx := 0; batchIdx < numBatches; batchIdx++ {
+		start := batchIdx * batchSize
+		end := start + batchSize
+		if end > len(documents) {
+			end = len(documents)
+		}
+
+		batch := documents[start:end]
+
+		wg.Add(1)
+		go func(batchDocs []GlowstickDocument, batchStart int) {
+			defer wg.Done()
+
+			if err := s.processBatch(batchDocs, batchStart, destTableURI); err != nil {
+				errChan <- err
+				return
+			}
+		}(batch, start)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Check for batch processing errors
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process embeddings for vector index
+	numDocs := len(documents)
+	embeddingDim := len(documents[0].Embedding)
+	embeddings := make([]float32, numDocs*embeddingDim)
+	labelMappings := make([]string, numDocs)
+
+	for i, doc := range documents {
+		if len(doc.Embedding) == 0 {
+			return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", doc.Id))
+		}
+		if len(doc.Embedding) != embeddingDim {
+			return InvalidInput_Err(fmt.Errorf("document %s has embedding dimension %d, expected %d", doc.Id, len(doc.Embedding), embeddingDim))
+		}
+		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
+		labelMappings[i] = doc.Id
 	}
 
 	if err := idx.Add(embeddings, len(documents)); err != nil {
@@ -327,6 +336,19 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Storage_Err(Wrap_Err(err, "failed to stat vector index file"))
 	}
 
+	hot_stats, statsExists, err := kv.GetBinary(STATS, []byte(collectionDefKey))
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to fetch hot stats"))
+	}
+	if !statsExists {
+		return Storage_Err(fmt.Errorf("collection stats not found for %s", collectionDefKey))
+	}
+
+	var hot_stats_doc CollectionStats
+	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
+		return Serialization_Err(Wrap_Err(err, "failed to unmarshal hot stats"))
+	}
+
 	hot_stats_doc.Doc_Count += int(len(documents))
 	hot_stats_doc.Vector_Index_Size = float64(info.Size())
 
@@ -339,6 +361,21 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Storage_Err(Wrap_Err(err, "failed to write hot stats"))
 	}
 
+	return nil
+}
+
+func (s *GDBService) processBatch(documents []GlowstickDocument, startIdx int, destTableURI string) error {
+	for i, doc := range documents {
+		doc_bytes, err := bson.Marshal(doc)
+		if err != nil {
+			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
+		}
+
+		key := []byte(doc.Id)
+		if err := s.KvService.PutBinary(destTableURI, key, doc_bytes); err != nil {
+			return Storage_Err(Wrap_Err(err, "failed to insert document %s at batch index %d", doc.Id, startIdx+i))
+		}
+	}
 	return nil
 }
 
@@ -578,7 +615,7 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 	}
 
 	if len(payload.DocumentId) == 0 {
-		return InvalidInput_Err(fmt.Errorf("Document Id is empty"))
+		return InvalidInput_Err(fmt.Errorf("document Id is empty"))
 	}
 
 	doc_raw, doc_exists, doc_get_err := kv.GetBinaryWithStringKey(collection.TableUri, payload.DocumentId)
