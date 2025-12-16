@@ -12,13 +12,33 @@ import (
 )
 
 var wtService = wt.WiredTiger()
-var WIREDTIGER_DIR = "volumes/WT_HOME"
+
+// getEnvOrDefault returns the environment variable value or a default
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// Data directories - configurable via environment variables for Docker
+var (
+	WIREDTIGER_DIR = getEnvOrDefault("WT_HOME", "volumes/WT_HOME")
+	VECTORS_DIR    = getEnvOrDefault("VECTORS_HOME", "volumes/vectors")
+)
 
 func StartServer() {
 
-	if _, err := os.Stat("volumes/WT_HOME"); os.IsNotExist(err) {
-		if mkErr := os.MkdirAll("volumes/WT_HOME", 0755); mkErr != nil {
-			fmt.Printf("failed to create volumes/db_files: %v\n", mkErr)
+	if _, err := os.Stat(WIREDTIGER_DIR); os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(WIREDTIGER_DIR, 0755); mkErr != nil {
+			fmt.Printf("failed to create %s: %v\n", WIREDTIGER_DIR, mkErr)
+			os.Exit(1)
+		}
+	}
+
+	if _, err := os.Stat(VECTORS_DIR); os.IsNotExist(err) {
+		if mkErr := os.MkdirAll(VECTORS_DIR, 0755); mkErr != nil {
+			fmt.Printf("failed to create %s: %v\n", VECTORS_DIR, mkErr)
 			os.Exit(1)
 		}
 	}

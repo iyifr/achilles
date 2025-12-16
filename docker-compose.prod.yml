@@ -1,0 +1,29 @@
+# docker-compose.prod.yml
+# Production overrides for AchillesDB
+#
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  achillesdb:
+    # Use a specific version tag in production
+    image: ${REGISTRY:-ghcr.io}/iyifr/achillesdb:${VERSION:-latest}
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "1"
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    # Remove port exposure in production (use reverse proxy)
+    # ports: []

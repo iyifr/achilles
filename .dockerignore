@@ -1,0 +1,48 @@
+# Git
+.git
+.gitignore
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+glowstickdb
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Local development data (don't include in image)
+volumes/
+cmd/doc-store/WT_HOME_DOCSTORE/
+pkgs/db_service/volumes/
+
+# Documentation
+*.md
+!README.md
+
+# Scripts and test data (not needed in prod image)
+scripts/
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+
+# Docker files (no need to copy into the image)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+

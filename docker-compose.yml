@@ -1,0 +1,37 @@
+# docker-compose.yml
+# AchillesDB Development and Production Setup
+#
+# Usage:
+#   Development:  docker-compose up
+#   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Build:        docker-compose build
+
+services:
+  achillesdb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: achillesdb:latest
+    container_name: achillesdb
+    ports:
+      - "8180:8180"
+    volumes:
+      # Persist database data between container restarts
+      - achilles_wiredtiger:/data/wiredtiger
+      - achilles_vectors:/data/vectors
+    environment:
+      - WT_HOME=/data/wiredtiger
+      - VECTORS_HOME=/data/vectors
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8180/api/v1/database"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  achilles_wiredtiger:
+    driver: local
+  achilles_vectors:
+    driver: local
