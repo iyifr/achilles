@@ -1,6 +1,6 @@
 # AchillesDB
 
-A high-performance vector-document database built with Go, WiredTiger, and FAISS.
+Vector-document database built with Go, WiredTiger, and FAISS.
 
 ## Features
 
