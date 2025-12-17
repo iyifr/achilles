@@ -110,21 +110,21 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
 └────────────────────────┴────────────────────────────┘
 ```
 
-**WiredTiger** handles document persistence—metadata, content, and collection catalogs are stored in B-tree tables with ACID transactions.
+**WiredTiger** handles document persistence—metadata, content, and collection catalogs are stored in B-tree tables. Documents are serialized using BSON for efficient storage and retrieval.
 
-**FAISS** handles vector similarity search. Each collection maintains its own index file for fast approximate nearest neighbor queries.
+**FAISS** handles vector similarity search. Each collection maintains its own index file (persisted to disk) for fast approximate nearest neighbor queries.
 
 **FastHTTP** serves the REST API with minimal allocation overhead.
 
 ### Design Tradeoffs
 
-| Choice                       | Tradeoff                                                                                                                                 |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Separate storage engines** | Optimized for each workload (documents vs vectors), but requires coordination between systems                                            |
-| **FAISS flat indexes**       | Ultimate simplicity (still researching Faiss Indexes), accurate results. Scales to ~1M vectors per collection before needing IVF indexes |
-| **Post-filter metadata**     | Vector search runs first, then filters. Fast for selective filters, slower for broad queries with strict filters                         |
-| **Single-node**              | No distributed complexity. Vertical scaling only—add RAM for larger indexes                                                              |
-| **CGO bindings**             | Direct C library access for performance, but complicates builds and cross-compilation                                                    |
+| Choice                       | Tradeoff                                                                                                                                                          |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Separate storage engines** | Optimized for each workload (documents vs vectors), but requires coordination between systems                                                                     |
+| **FAISS flat indexes**       | Ultimate simplicity (still researching Faiss Indexes), accurate results. Scales to ~1M vectors per collection before needing IVF for non-exhaustive vector search |
+| **Post-filter metadata**     | Vector search runs first, then filters. Fast for selective filters, slower for broad queries with strict filters                                                  |
+| **Single-node**              | No distributed complexity. Vertical scaling only—add RAM for larger indexes                                                                                       |
+| **CGO bindings**             | Direct C library access for Wiredtiger & Faiss.. (no external packages) and cross-compilation                                                                     |
 
 ### When to Use AchillesDB
 
@@ -132,7 +132,7 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
 
 - Semantic search over document collections
 - RAG applications needing fast retrieval
-- Prototypes and small-to-medium datasets (<1M vectors)
+- Prototypes!
 
 ## Build from Source
 
