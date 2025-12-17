@@ -2,13 +2,23 @@ package dbservice
 
 import (
 	wt "achillesdb/pkgs/wiredtiger"
+	"os"
 )
 
 // TABLE URIS for creating wiredtiger tables
 var CATALOG = "table:_catalog"
 var STATS = "table:_stats"
 var LABELS_TO_DOC_ID_MAPPING_TABLE_URI = "table:label_docID"
-var VECTORS_FILE_PATH = "volumes/vectors"
+
+// VECTORS_FILE_PATH - configurable via VECTORS_HOME env var for Docker
+var VECTORS_FILE_PATH = getEnvOrDefault("VECTORS_HOME", "volumes/vectors")
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
 
 type GlowstickDocument struct {
 	Id        string                 `bson:"_id" json:"id"`

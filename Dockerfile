@@ -4,7 +4,8 @@
 # ============================================================================
 
 # Stage 1: Build environment with all dependencies
-FROM ubuntu:22.04 AS builder
+# Using Ubuntu 24.04 for CMake 3.28+ (FAISS v1.9 requires CMake 3.24+)
+FROM ubuntu:24.04 AS builder
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,13 +21,23 @@ RUN apt-get update && apt-get install -y \
     autoconf \
     automake \
     libtool \
+    # WiredTiger dependencies
     libsnappy-dev \
     liblz4-dev \
     libzstd-dev \
     swig \
     python3 \
+    python3-dev \
+    # FAISS dependencies (BLAS/LAPACK)
+    libopenblas-dev \
+    liblapack-dev \
+    libgomp1 \
+    # General
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Verify CMake version
+RUN cmake --version
 
 # Install Go 1.24
 ARG GO_VERSION=1.24.2
@@ -39,9 +50,9 @@ ENV GOPATH="/go"
 ENV CGO_ENABLED=1
 
 # Build WiredTiger from source
-ARG WIREDTIGER_VERSION=11.3.0
+# Using mongodb-8.0 branch which has GCC 13/14 compatibility fixes
 WORKDIR /tmp/wiredtiger
-RUN git clone --depth 1 --branch ${WIREDTIGER_VERSION} \
+RUN git clone --depth 1 --branch mongodb-8.0 \
     https://github.com/wiredtiger/wiredtiger.git . \
     && mkdir build && cd build \
     && cmake .. \
@@ -49,11 +60,14 @@ RUN git clone --depth 1 --branch ${WIREDTIGER_VERSION} \
         -DENABLE_SNAPPY=1 \
         -DENABLE_LZ4=1 \
         -DENABLE_ZSTD=1 \
+        -DENABLE_PYTHON=OFF \
+        -DENABLE_STRICT=OFF \
+        -DCMAKE_C_FLAGS="-Wno-error" \
         -DCMAKE_BUILD_TYPE=Release \
     && make -j$(nproc) \
     && make install
 
-# Build FAISS from source
+# Build FAISS from source (including C API)
 ARG FAISS_VERSION=v1.9.0
 WORKDIR /tmp/faiss
 RUN git clone --depth 1 --branch ${FAISS_VERSION} \
@@ -64,12 +78,20 @@ RUN git clone --depth 1 --branch ${FAISS_VERSION} \
         -DFAISS_ENABLE_PYTHON=OFF \
         -DFAISS_ENABLE_C_API=ON \
         -DBUILD_SHARED_LIBS=ON \
+        -DBUILD_TESTING=OFF \
+        -DFAISS_OPT_LEVEL=generic \
         -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build build -j$(nproc) \
-    && cmake --install build
+    && cmake --build build -j$(nproc) --target faiss \
+    && cmake --build build -j$(nproc) --target faiss_c \
+    && cmake --install build \
+    && cp build/c_api/libfaiss_c.so /usr/local/lib/ \
+    && ldconfig
 
-# Update library cache
-RUN ldconfig
+# Verify libraries are installed
+RUN echo "=== Installed libraries ===" \
+    && ls -la /usr/local/lib/libfaiss* \
+    && ls -la /usr/local/lib/libwiredtiger* \
+    && ldconfig -p | grep -E "(faiss|wiredtiger)"
 
 # Build the Go application
 WORKDIR /app
@@ -79,15 +101,17 @@ RUN go mod download
 COPY . .
 
 # Build with CGO enabled
-RUN CGO_ENABLED=1 \
+# Note: FAISS C API library is named 'faiss_c' in the c_api directory
+RUN ldconfig && \
+    CGO_ENABLED=1 \
     CGO_CFLAGS="-I/usr/local/include" \
-    CGO_LDFLAGS="-L/usr/local/lib -lwiredtiger -lfaiss_c" \
+    CGO_LDFLAGS="-L/usr/local/lib -lwiredtiger -lfaiss_c -lfaiss -lopenblas -lgomp -lstdc++ -lm" \
     go build -ldflags="-s -w" -o achillesdb .
 
 # ============================================================================
 # Stage 2: Runtime image
 # ============================================================================
-FROM ubuntu:22.04 AS runtime
+FROM ubuntu:24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -97,13 +121,14 @@ RUN apt-get update && apt-get install -y \
     liblz4-1 \
     libzstd1 \
     libgomp1 \
+    libopenblas0 \
+    curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled libraries from builder
 COPY --from=builder /usr/local/lib/libwiredtiger*.so* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libfaiss*.so* /usr/local/lib/
-COPY --from=builder /usr/local/lib/libomp*.so* /usr/local/lib/ 2>/dev/null || true
 
 # Update library cache
 RUN ldconfig
@@ -141,4 +166,3 @@ VOLUME ["/data"]
 
 # Run the application
 CMD ["./achillesdb"]
-
