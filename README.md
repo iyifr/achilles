@@ -2,110 +2,56 @@
 
 Vector-document database built with Go, WiredTiger, and FAISS.
 
-## Features
-
-- **Vector Similarity Search** - Fast approximate nearest neighbor search using FAISS
-- **Document Storage** - Persistent document storage with WiredTiger
-- **REST API** - Simple HTTP API for all operations
-- **Metadata Filtering** - Filter query results by document metadata
-
-## Quick Start with Docker
+## Quick Start
 
 ```bash
-# Pull and run the latest image
-docker pull ghcr.io/iyifr/achillesdb:latest
-docker run -d -p 8180:8180 -v achilles_data:/data ghcr.io/iyifr/achillesdb:latest
-
-# Or use docker-compose
-docker-compose up -d
+docker run -d -p 8180:8180 ghcr.io/iyifr/achilles:latest
 ```
 
-## API Endpoints
+## API
 
-| Method | Endpoint                                                         | Description         |
-| ------ | ---------------------------------------------------------------- | ------------------- |
-| POST   | `/api/v1/database`                                               | Create a database   |
-| POST   | `/api/v1/database/{db}/collections`                              | Create a collection |
-| GET    | `/api/v1/database/{db}/collections`                              | List collections    |
-| GET    | `/api/v1/database/{db}/collections/{collection}`                 | Get collection info |
-| POST   | `/api/v1/database/{db}/collections/{collection}/documents`       | Insert documents    |
-| GET    | `/api/v1/database/{db}/collections/{collection}/documents`       | Get all documents   |
-| POST   | `/api/v1/database/{db}/collections/{collection}/documents/query` | Query documents     |
-| PUT    | `/api/v1/database/{db}/collections/{collection}/documents`       | Update documents    |
+| Method | Endpoint                                                  | Description       |
+| ------ | --------------------------------------------------------- | ----------------- |
+| POST   | `/api/v1/database`                                        | Create database   |
+| POST   | `/api/v1/database/{db}/collections`                       | Create collection |
+| POST   | `/api/v1/database/{db}/collections/{col}/documents`       | Insert documents  |
+| POST   | `/api/v1/database/{db}/collections/{col}/documents/query` | Query by vector   |
+| GET    | `/api/v1/database/{db}/collections/{col}/documents`       | Get documents     |
 
-## Example Usage
+## Usage
 
 ```bash
-# Create a database
-curl -X POST http://localhost:8180/api/v1/database -H "Content-Type: application/json" -d '{"name": "mydb"}'
-
-# Create a collection
-curl -X POST http://localhost:8180/api/v1/database/mydb/collections -H "Content-Type: application/json" -d '{"name": "docs"}'
-
-# Insert documents with embeddings
-curl -X POST http://localhost:8180/api/v1/database/mydb/collections/docs/documents \
+# Create database
+curl -X POST localhost:8180/api/v1/database \
   -H "Content-Type: application/json" \
-  -d '{
-    "documents": [
-      {
-        "id": "doc1",
-        "content": "Hello world",
-        "embedding": [0.1, 0.2, 0.3, ...],
-        "metadata": {"category": "greeting"}
-      }
-    ]
-  }'
+  -d '{"name": "mydb"}'
 
-# Query similar documents
-curl -X POST http://localhost:8180/api/v1/database/mydb/collections/docs/documents/query \
+# Create collection
+curl -X POST localhost:8180/api/v1/database/mydb/collections \
   -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 5,
-    "query_embedding": [0.1, 0.2, 0.3, ...],
-    "where": {"category": "greeting"}
-  }'
+  -d '{"name": "docs"}'
+
+# Insert documents
+curl -X POST localhost:8180/api/v1/database/mydb/collections/docs/documents \
+  -H "Content-Type: application/json" \
+  -d '{"documents": [{"id": "1", "content": "hello", "embedding": [0.1, 0.2, ...]}]}'
+
+# Query
+curl -X POST localhost:8180/api/v1/database/mydb/collections/docs/documents/query \
+  -H "Content-Type: application/json" \
+  -d '{"top_k": 5, "query_embedding": [0.1, 0.2, ...]}'
 ```
 
-## Building from Source
-
-### Prerequisites
-
-- Go 1.24+
-- WiredTiger (C library)
-- FAISS with C API
-
-### macOS
+## Build from Source
 
 ```bash
+# macOS
 brew install wiredtiger faiss
-go build -o glowstickdb .
+go build -o achillesdb .
+
+# Docker
+docker build -t achillesdb .
 ```
-
-### Linux
-
-See [Dockerfile](./Dockerfile) for complete build instructions.
-
-## Docker Build
-
-```bash
-# Build the image
-docker build -t achillesdb:latest .
-
-# Run with persistent storage
-docker run -d \
-  -p 8180:8180 \
-  -v $(pwd)/data/wiredtiger:/data/wiredtiger \
-  -v $(pwd)/data/vectors:/data/vectors \
-  --name achillesdb \
-  achillesdb:latest
-```
-
-## Environment Variables
-
-| Variable       | Default           | Description               |
-| -------------- | ----------------- | ------------------------- |
-| `WT_HOME`      | `volumes/WT_HOME` | WiredTiger data directory |
-| `VECTORS_HOME` | `volumes/vectors` | FAISS vectors directory   |
 
 ## License
 
