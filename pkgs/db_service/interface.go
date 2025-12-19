@@ -10,14 +10,12 @@ var CATALOG = "table:_catalog"
 var STATS = "table:_stats"
 var LABELS_TO_DOC_ID_MAPPING_TABLE_URI = "table:label_docID"
 
-// VECTORS_FILE_PATH - configurable via VECTORS_HOME env var for Docker
-var VECTORS_FILE_PATH = getEnvOrDefault("VECTORS_HOME", "volumes/vectors")
-
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
+// GetVectorsFilePath returns the vectors directory path, configurable via VECTORS_HOME env var
+func GetVectorsFilePath() string {
+	if value := os.Getenv("VECTORS_HOME"); value != "" {
 		return value
 	}
-	return defaultValue
+	return "volumes/vectors"
 }
 
 type GlowstickDocument struct {

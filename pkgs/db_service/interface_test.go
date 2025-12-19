@@ -20,11 +20,20 @@ func setupTestDB(t *testing.T, dirName string) (wt.WTService, DBService) {
 	wtService := wt.WiredTiger()
 
 	// Ensure unique directory for each test
-	testDir := fmt.Sprintf("volumes/WT_HOME_TEST_%s_%d", dirName, time.Now().UnixNano())
+	timestamp := time.Now().UnixNano()
+	testDir := fmt.Sprintf("volumes/WT_HOME_TEST_%s_%d", dirName, timestamp)
+	vectorsDir := fmt.Sprintf("volumes/vectors_test_%s_%d", dirName, timestamp)
 
 	if err := os.MkdirAll(testDir, 0755); err != nil {
 		t.Fatalf("failed to create test dir: %v", err)
 	}
+
+	if err := os.MkdirAll(vectorsDir, 0755); err != nil {
+		t.Fatalf("failed to create vectors dir: %v", err)
+	}
+
+	// Set VECTORS_HOME for this test
+	os.Setenv("VECTORS_HOME", vectorsDir)
 
 	if err := wtService.Open(testDir, getWiredTigerConfigForConnection()); err != nil {
 		t.Fatalf("Failed to open WiredTiger: %v", err)
@@ -34,6 +43,7 @@ func setupTestDB(t *testing.T, dirName string) (wt.WTService, DBService) {
 	if err := InitTablesHelper(wtService); err != nil {
 		wtService.Close()
 		os.RemoveAll(testDir)
+		os.RemoveAll(vectorsDir)
 		t.Fatalf("Failed to init tables: %v", err)
 	}
 
@@ -42,6 +52,7 @@ func setupTestDB(t *testing.T, dirName string) (wt.WTService, DBService) {
 			t.Logf("Warning: failed to close connection: %v", err)
 		}
 		os.RemoveAll(testDir)
+		os.RemoveAll(vectorsDir)
 	})
 
 	name := "default"

@@ -99,7 +99,7 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 		Id:             collectionId,
 		Ns:             collectionKey,
 		TableUri:       collectionTableUri,
-		VectorIndexUri: fmt.Sprintf("%s/%s%s", VECTORS_FILE_PATH, collection_name, ".index"),
+		VectorIndexUri: fmt.Sprintf("%s/%s%s", GetVectorsFilePath(), collection_name, ".index"),
 		CreatedAt:      primitive.NewDateTimeFromTime(time.Now()),
 		UpdatedAt:      primitive.NewDateTimeFromTime(time.Now()),
 	}
@@ -219,7 +219,6 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 		Stats:     stats,
 	}, nil
 }
-
 func (s *GDBService) InsertDocuments(collection_name string, documents []GlowstickDocument) error {
 	if len(documents) == 0 {
 		return InvalidInput_Err(ErrEmptyDocuments)
@@ -248,70 +247,55 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 
 	idx, err := vectr.ReadIndex(vectorIndexFilePath)
 	if err != nil {
+		if len(documents[0].Embedding) == 0 {
+			return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", documents[0].Id))
+		}
 		const indexDesc = "Flat"
 		idx, err = vectr.IndexFactory(len(documents[0].Embedding), indexDesc, faiss.MetricL2)
 		if err != nil {
 			return Internal_Err(Wrap_Err(err, "failed to create new vector index"))
 		}
 	}
+	defer idx.Free()
 
 	destTableURI := collection.TableUri
-
-	// Batch processing for large inserts
-	const batchSize = 1000
-	numBatches := (len(documents) + batchSize - 1) / batchSize
-
-	var wg sync.WaitGroup
-	errChan := make(chan error, numBatches)
 
 	startLabel, err := idx.NTotal()
 	if err != nil {
 		return Internal_Err(Wrap_Err(err, "failed to get index size"))
 	}
 
-	for batchIdx := 0; batchIdx < numBatches; batchIdx++ {
-		start := batchIdx * batchSize
-		end := start + batchSize
-		if end > len(documents) {
-			end = len(documents)
-		}
-
-		batch := documents[start:end]
-
-		wg.Add(1)
-		go func(batchDocs []GlowstickDocument, batchStart int) {
-			defer wg.Done()
-
-			if err := s.processBatch(batchDocs, batchStart, destTableURI); err != nil {
-				errChan <- err
-				return
-			}
-		}(batch, start)
-	}
-
-	wg.Wait()
-	close(errChan)
-
-	// Check for batch processing errors
-	for err := range errChan {
-		if err != nil {
-			return err
-		}
-	}
-
 	// Process embeddings for vector index
 	numDocs := len(documents)
-	embeddingDim := len(documents[0].Embedding)
-	embeddings := make([]float32, numDocs*embeddingDim)
+	var embeddingDim int
+	var embeddings []float32
 	labelMappings := make([]string, numDocs)
 
+	// Insert documents into KV store and validate embeddings
 	for i, doc := range documents {
+		// Validate embedding
 		if len(doc.Embedding) == 0 {
 			return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", doc.Id))
 		}
-		if len(doc.Embedding) != embeddingDim {
+
+		if i == 0 {
+			embeddingDim = len(doc.Embedding)
+			embeddings = make([]float32, numDocs*embeddingDim) // Resize with correct dimension
+		} else if len(doc.Embedding) != embeddingDim {
 			return InvalidInput_Err(fmt.Errorf("document %s has embedding dimension %d, expected %d", doc.Id, len(doc.Embedding), embeddingDim))
 		}
+
+		doc_bytes, err := bson.Marshal(doc)
+		if err != nil {
+			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
+		}
+
+		key := []byte(doc.Id)
+		if err := s.KvService.PutBinary(destTableURI, key, doc_bytes); err != nil {
+			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
+		}
+
+		// Copy embedding data
 		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
 		labelMappings[i] = doc.Id
 	}
@@ -320,15 +304,15 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Internal_Err(Wrap_Err(err, "failed to add embeddings to index"))
 	}
 
-	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to write index to file"))
-	}
-
 	for i, docIDHex := range labelMappings {
 		label := startLabel + int64(i)
 		if err := s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docIDHex); err != nil {
 			return Storage_Err(Wrap_Err(err, "failed to write label->docID mapping for label %d", label))
 		}
+	}
+
+	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to write index to file"))
 	}
 
 	info, err := os.Stat(vectorIndexFilePath)
@@ -361,21 +345,6 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Storage_Err(Wrap_Err(err, "failed to write hot stats"))
 	}
 
-	return nil
-}
-
-func (s *GDBService) processBatch(documents []GlowstickDocument, startIdx int, destTableURI string) error {
-	for i, doc := range documents {
-		doc_bytes, err := bson.Marshal(doc)
-		if err != nil {
-			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
-		}
-
-		key := []byte(doc.Id)
-		if err := s.KvService.PutBinary(destTableURI, key, doc_bytes); err != nil {
-			return Storage_Err(Wrap_Err(err, "failed to insert document %s at batch index %d", doc.Id, startIdx+i))
-		}
-	}
 	return nil
 }
 
