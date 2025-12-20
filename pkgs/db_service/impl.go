@@ -81,6 +81,57 @@ func (s *GDBService) CreateDB() error {
 
 	return nil
 }
+func (s *GDBService) ListDatabases() (ListDatabasesResponse, error) {
+	startKey := []byte("db:")
+	endKey := []byte("db;") // Using semicolon as it comes after colon in ASCII
+
+	cursor, err := s.KvService.ScanRangeBinary(CATALOG, startKey, endKey)
+	if err != nil {
+		return ListDatabasesResponse{}, Storage_Err(Wrap_Err(err, "failed to scan catalog for databases"))
+	}
+	defer cursor.Close()
+
+	var databases []DatabaseInfo
+
+	for cursor.Next() {
+		_, value, err := cursor.Current()
+		if err != nil {
+			return ListDatabasesResponse{}, Storage_Err(Wrap_Err(err, "failed to get current database"))
+		}
+
+		var dbEntry DbCatalogEntry
+		if err := bson.Unmarshal(value, &dbEntry); err != nil {
+			return ListDatabasesResponse{}, Serialization_Err(Wrap_Err(err, "failed to unmarshal database catalog entry"))
+		}
+
+		// Count collections for this database
+		collStartKey := []byte(dbEntry.Name + ".")
+		collEndKey := []byte(dbEntry.Name + "/")
+
+		collCount := 0
+		collCursor, err := s.KvService.ScanRangeBinary(CATALOG, collStartKey, collEndKey)
+		if err == nil {
+			for collCursor.Next() {
+				collCount++
+			}
+			collCursor.Close()
+		}
+
+		databases = append(databases, DatabaseInfo{
+			Name:            dbEntry.Name,
+			CollectionCount: collCount,
+			Empty:           collCount == 0,
+		})
+	}
+
+	if err := cursor.Err(); err != nil {
+		return ListDatabasesResponse{}, Storage_Err(Wrap_Err(err, "cursor error during iteration"))
+	}
+
+	return ListDatabasesResponse{
+		Databases: databases,
+	}, nil
+}
 
 func (s *GDBService) DeleteDB(name string) error {
 	if name == "" {

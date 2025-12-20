@@ -41,6 +41,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /databases:
+    get:
+      summary: List all databases
+      description: Returns a list of all databases with their sizes and empty status (MongoDB-style response)
+      tags:
+        - Database
+      responses:
+        '200':
+          description: List of databases
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDatabasesResponse'
+
   /database/{database_name}:
     delete:
       summary: Delete a database
@@ -498,6 +512,30 @@ components:
             $ref: '#/components/schemas/Document'
         stats:
           $ref: '#/components/schemas/CollectionStats'
+
+    DatabaseInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Database name
+        collectionCount:
+          type: integer
+          description: Number of collections in this database
+        empty:
+          type: boolean
+          description: Whether the database has no collections
+
+    ListDatabasesResponse:
+      type: object
+      properties:
+        databases:
+          type: array
+          items:
+            $ref: '#/components/schemas/DatabaseInfo'
+        db_count:
+          type: integer
+          description: Number of databases
 `
 
 const swaggerUIHTML = `<!DOCTYPE html>

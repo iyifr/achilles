@@ -43,9 +43,20 @@ type DocUpdatePayload struct {
 	Updates    map[string]any
 }
 
+type DatabaseInfo struct {
+	Name            string `json:"name"`
+	CollectionCount int    `json:"collectionCount"`
+	Empty           bool   `json:"empty"`
+}
+
+type ListDatabasesResponse struct {
+	Databases []DatabaseInfo `json:"databases"`
+}
+
 type DBService interface {
 	CreateDB() error
 	DeleteDB(name string) error
+	ListDatabases() (ListDatabasesResponse, error)
 	ListCollections() ([]CollectionCatalogEntry, error)
 	CreateCollection(collection_name string) error
 	DeleteCollection(collection_name string) error

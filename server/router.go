@@ -48,6 +48,7 @@ func Router() *router.Router {
 
 	apiV1 := r.Group("/api/v1")
 	apiV1.POST("/database", CreateDB)
+	apiV1.GET("/databases", ListDatabasesHandler)
 	apiV1.DELETE("/database/{database_name}", DeleteDBHandler)
 	apiV1.POST("/database/{database_name}/collections", CreateCollection)
 	apiV1.GET("/database/{database_name}/collections", ListCollections)
@@ -98,6 +99,42 @@ func CreateDB(ctx *fasthttp.RequestCtx) {
 	ctx.Write([]byte(`{"message":"Database created successfully"}`))
 }
 
+func ListDatabasesHandler(ctx *fasthttp.RequestCtx) {
+	db := dbservice.DatabaseService(dbservice.DbParams{
+		Name:      "",
+		KvService: wtService,
+	})
+
+	result, err := db.ListDatabases()
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	databases := result.Databases
+	if databases == nil {
+		databases = []dbservice.DatabaseInfo{}
+	}
+
+	response := struct {
+		Databases []dbservice.DatabaseInfo `json:"databases"`
+		DbCount   int                      `json:"db_count"`
+	}{
+		Databases: databases,
+		DbCount:   len(databases),
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	jsonBytes, err := json.Marshal(response)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.WriteString(err.Error())
+		return
+	}
+	ctx.Write(jsonBytes)
+}
+
 func ListCollections(ctx *fasthttp.RequestCtx) {
 	database_name := ctx.UserValue("database_name").(string)
 	db := dbservice.DatabaseService(dbservice.DbParams{
@@ -109,9 +146,18 @@ func ListCollections(ctx *fasthttp.RequestCtx) {
 		handleError(ctx, err)
 		return
 	}
+
+	response := struct {
+		Collections     []dbservice.CollectionCatalogEntry `json:"collections"`
+		CollectionCount int                                `json:"collection_count"`
+	}{
+		Collections:     collections,
+		CollectionCount: len(collections),
+	}
+
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
-	jsonBytes, err := json.Marshal(collections)
+	jsonBytes, err := json.Marshal(response)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.WriteString(err.Error())
