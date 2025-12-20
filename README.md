@@ -58,7 +58,7 @@ curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents 
 ### Vector Query with Metadata Filtering
 
 Achilles supports expressive metadata filtering using the `where` clause.
-You can combine semantic vector search with powerful filters:
+You can combine semantic vector search with filtering:
 
 ```bash
 # Find similar documents, filtered by category
@@ -125,9 +125,7 @@ curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/
     }
   }'
 
-# Achillesdb supports arrays as metadata values as well as objects.
-# Suppose you have already determined the list of ACL IDs the user is part of:
-# For example, user_acls = ["acl-readers", "acl-admin-42"]
+
 curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
   -H "Content-Type: application/json" \
   -d '{
@@ -234,7 +232,3 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
 ## License
 
 MIT
-
-```
-
-```
