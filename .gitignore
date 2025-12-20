@@ -2,3 +2,4 @@ WT_HOME*
 *.h
 header-file/
 headers/
+scripts/test-data/doc-corpus/
