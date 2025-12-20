@@ -184,6 +184,16 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
   }'
 ```
 
+## Why ?
+
+Why build a vector database with so many more popular alternative (ChromaDb, Turbopuffer, Milvus) ?
+
+The vector database with the best DX is undoubtedly ChromaDB. You should probably just use ChromaDB.
+
+The reason i built this is because ChromaDB doesn't support arrays as metadata values, which makes a whole class of features you would bolt on a retrieval system much harder.
+
+Also, I think wiredtiger is a powerful engine and was my gateway drug into databases by trying to write bindings and play with it.
+
 ## Architecture
 
 ```
@@ -202,27 +212,7 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
 **FAISS** handles vector similarity search. Each collection maintains its own index file (persisted to disk) for fast approximate nearest neighbor queries.
 
 **FastHTTP** serves the REST API with minimal allocation overhead.
-
-### Design Tradeoffs
-
-| Choice                       | Tradeoff                                                                                                                                                          |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Separate storage engines** | Optimized for each workload (documents vs vectors), but requires coordination between systems                                                                     |
-| **FAISS flat indexes**       | Ultimate simplicity (still researching Faiss Indexes), accurate results. Scales to ~1M vectors per collection before needing IVF for non-exhaustive vector search |
-| **Post-filter metadata**     | Vector search runs first, then filters. Fast for selective filters, slower for broad queries with strict filters                                                  |
-| **Single-node**              | No distributed complexity. Vertical scaling only—add RAM for larger indexes                                                                                       |
-| **CGO bindings**             | C bindings written mostly by hand                                                                                                                                 |
-
-## Build from Source
-
-```bash
-# macOS
-brew install wiredtiger faiss
-go build -o achillesdb .
-
-# Docker
-docker build -t achillesdb .
-```
+|
 
 ## License
 
