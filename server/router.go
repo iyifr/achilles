@@ -41,13 +41,21 @@ func handleError(ctx *fasthttp.RequestCtx, err error) {
 
 func Router() *router.Router {
 	r := router.New()
+
+	// OpenAPI documentation routes
+	r.GET("/docs", SwaggerUIHandler)
+	r.GET("/api/v1/openapi.yaml", OpenAPISpecHandler)
+
 	apiV1 := r.Group("/api/v1")
 	apiV1.POST("/database", CreateDB)
+	apiV1.DELETE("/database/{database_name}", DeleteDBHandler)
 	apiV1.POST("/database/{database_name}/collections", CreateCollection)
 	apiV1.GET("/database/{database_name}/collections", ListCollections)
+	apiV1.DELETE("/database/{database_name}/collections/{collection_name}", DeleteCollectionHandler)
 	apiV1.GET("/database/{database_name}/collections/{collection_name}", GetCollection)
 	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents", InsertDocumentsHndlr)
 	apiV1.GET("/database/{database_name}/collections/{collection_name}/documents", GetDocumentsHandler)
+	apiV1.DELETE("/database/{database_name}/collections/{collection_name}/documents", DeleteDocumentsHandler)
 	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents/query", QueryDocumentsHandler)
 	apiV1.PUT("/database/{database_name}/collections/{collection_name}/documents", UpdateDocumentsHandler)
 	return r
@@ -295,4 +303,73 @@ func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.Write([]byte(`{"message":"Documents updated successfully"}`))
+}
+
+func DeleteDBHandler(ctx *fasthttp.RequestCtx) {
+	database_name := ctx.UserValue("database_name").(string)
+
+	db := dbservice.DatabaseService(dbservice.DbParams{
+		Name:      database_name,
+		KvService: wtService,
+	})
+
+	err := db.DeleteDB(database_name)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	ctx.Write([]byte(`{"message":"Database deleted successfully"}`))
+}
+
+func DeleteCollectionHandler(ctx *fasthttp.RequestCtx) {
+	database_name := ctx.UserValue("database_name").(string)
+	collection_name := ctx.UserValue("collection_name").(string)
+
+	db := dbservice.DatabaseService(dbservice.DbParams{
+		Name:      database_name,
+		KvService: wtService,
+	})
+
+	err := db.DeleteCollection(collection_name)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	ctx.Write([]byte(`{"message":"Collection deleted successfully"}`))
+}
+
+func DeleteDocumentsHandler(ctx *fasthttp.RequestCtx) {
+	database_name := ctx.UserValue("database_name").(string)
+	collection_name := ctx.UserValue("collection_name").(string)
+
+	var requestBody struct {
+		DocumentIds []string `json:"document_ids"`
+	}
+
+	if err := json.Unmarshal(ctx.Request.Body(), &requestBody); err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.WriteString("Invalid JSON payload")
+		return
+	}
+
+	db := dbservice.DatabaseService(dbservice.DbParams{
+		Name:      database_name,
+		KvService: wtService,
+	})
+
+	err := db.DeleteDocuments(collection_name, requestBody.DocumentIds)
+	if err != nil {
+		handleError(ctx, err)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	ctx.Write([]byte(`{"message":"Documents deleted successfully"}`))
 }

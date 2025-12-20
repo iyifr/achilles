@@ -48,9 +48,11 @@ type DBService interface {
 	DeleteDB(name string) error
 	ListCollections() ([]CollectionCatalogEntry, error)
 	CreateCollection(collection_name string) error
+	DeleteCollection(collection_name string) error
 	GetCollection(collection_name string) (CollectionEntry, error)
 	InsertDocuments(collection_name string, documents []GlowstickDocument) error
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
+	DeleteDocuments(collection_name string, documentIds []string) error
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
 	UpdateDocuments(collection_name string, payload *DocUpdatePayload) error
 }

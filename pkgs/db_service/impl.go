@@ -83,6 +83,79 @@ func (s *GDBService) CreateDB() error {
 }
 
 func (s *GDBService) DeleteDB(name string) error {
+	if name == "" {
+		return InvalidInput_Err(ErrEmptyName)
+	}
+
+	kv := s.KvService
+
+	// Check if database exists
+	dbKey := fmt.Sprintf("db:%s", name)
+	_, exists, err := kv.GetBinaryWithStringKey(CATALOG, dbKey)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to check if database exists"))
+	}
+	if !exists {
+		return NotFound_Err(ErrDatabaseNotFound)
+	}
+
+	// Get all collections for this database and delete them
+	startKey := []byte(name + ".")
+	endKey := []byte(name + "/")
+
+	cursor, err := kv.ScanRangeBinary(CATALOG, startKey, endKey)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to scan catalog for collections"))
+	}
+
+	var collectionsToDelete []CollectionCatalogEntry
+	for cursor.Next() {
+		_, value, err := cursor.Current()
+		if err != nil {
+			cursor.Close()
+			return Storage_Err(Wrap_Err(err, "failed to get current collection"))
+		}
+		var collection CollectionCatalogEntry
+		if err := bson.Unmarshal(value, &collection); err != nil {
+			cursor.Close()
+			return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
+		}
+		collectionsToDelete = append(collectionsToDelete, collection)
+	}
+	cursor.Close()
+
+	// Delete each collection's resources
+	for _, collection := range collectionsToDelete {
+		// Delete the collection's table (if it exists)
+		tableExists, _ := kv.TableExists(collection.TableUri)
+		if tableExists {
+			// Note: WiredTiger doesn't have a DropTable in the interface,
+			// so we'll delete all entries from the table
+			// For now, we just delete the catalog and stats entries
+		}
+
+		// Delete vector index file
+		if collection.VectorIndexUri != "" {
+			os.Remove(collection.VectorIndexUri)
+		}
+
+		// Delete collection from catalog
+		if err := kv.DeleteBinary(CATALOG, []byte(collection.Ns)); err != nil {
+			return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
+		}
+
+		// Delete stats entry
+		if err := kv.DeleteBinary(STATS, []byte(collection.Ns)); err != nil {
+			// Stats might
+			//  not exist, continue
+		}
+	}
+
+	// Delete the database entry from catalog
+	if err := kv.DeleteBinaryWithStringKey(CATALOG, dbKey); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to delete database catalog entry"))
+	}
+
 	return nil
 }
 
@@ -142,6 +215,44 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 	if err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to write stats entry"))
 	}
+
+	return nil
+}
+
+func (s *GDBService) DeleteCollection(collection_name string) error {
+	if len(collection_name) == 0 {
+		return InvalidInput_Err(ErrEmptyName)
+	}
+
+	kv := s.KvService
+	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
+
+	// Get collection info
+	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
+	}
+	if !exists {
+		return NotFound_Err(ErrCollectionNotFound)
+	}
+
+	var collection CollectionCatalogEntry
+	if err := bson.Unmarshal(val, &collection); err != nil {
+		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
+	}
+
+	// Delete vector index file
+	if collection.VectorIndexUri != "" {
+		os.Remove(collection.VectorIndexUri)
+	}
+
+	// Delete collection from catalog
+	if err := kv.DeleteBinary(CATALOG, []byte(collectionDefKey)); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
+	}
+
+	// Delete stats entry
+	kv.DeleteBinary(STATS, []byte(collectionDefKey))
 
 	return nil
 }
@@ -304,9 +415,9 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Internal_Err(Wrap_Err(err, "failed to add embeddings to index"))
 	}
 
-	for i, docIDHex := range labelMappings {
+	for i, docID := range labelMappings {
 		label := startLabel + int64(i)
-		if err := s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docIDHex); err != nil {
+		if err := s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docID); err != nil {
 			return Storage_Err(Wrap_Err(err, "failed to write label->docID mapping for label %d", label))
 		}
 	}
@@ -614,6 +725,72 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 
 	if err := kv.PutBinaryWithStringKey(collection.TableUri, payload.DocumentId, updated_val); err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to update document"))
+	}
+
+	return nil
+}
+
+func (s *GDBService) DeleteDocuments(collection_name string, documentIds []string) error {
+	if len(documentIds) == 0 {
+		return InvalidInput_Err(ErrEmptyDocuments)
+	}
+
+	kv := s.KvService
+	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
+
+	// Get collection info
+	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
+	}
+	if !exists {
+		return NotFound_Err(ErrCollectionNotFound)
+	}
+
+	var collection CollectionCatalogEntry
+	if err := bson.Unmarshal(val, &collection); err != nil {
+		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
+	}
+
+	// Delete each document
+	deletedCount := 0
+	for _, docId := range documentIds {
+		// Check if document exists before deleting
+		_, docExists, _ := kv.GetBinaryWithStringKey(collection.TableUri, docId)
+		if docExists {
+			if err := kv.DeleteBinaryWithStringKey(collection.TableUri, docId); err != nil {
+				return Storage_Err(Wrap_Err(err, "failed to delete document %s", docId))
+			}
+			deletedCount++
+		}
+	}
+
+	// Update stats if any documents were deleted
+	if deletedCount > 0 {
+		statsVal, statsExists, err := kv.GetBinary(STATS, []byte(collectionDefKey))
+		if err != nil {
+			return Storage_Err(Wrap_Err(err, "failed to get stats"))
+		}
+		if statsExists {
+			var stats CollectionStats
+			if err := bson.Unmarshal(statsVal, &stats); err != nil {
+				return Serialization_Err(Wrap_Err(err, "failed to unmarshal stats"))
+			}
+
+			stats.Doc_Count -= deletedCount
+			if stats.Doc_Count < 0 {
+				stats.Doc_Count = 0
+			}
+
+			updatedStats, err := bson.Marshal(stats)
+			if err != nil {
+				return Serialization_Err(Wrap_Err(err, "failed to marshal updated stats"))
+			}
+
+			if err := kv.PutBinary(STATS, []byte(collectionDefKey), updatedStats); err != nil {
+				return Storage_Err(Wrap_Err(err, "failed to update stats"))
+			}
+		}
 	}
 
 	return nil

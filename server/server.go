@@ -69,8 +69,16 @@ func StartServer() {
 
 	r := Router()
 
+	server := &fasthttp.Server{
+		Handler:          r.Handler,
+		ReadBufferSize:   16384,
+		WriteBufferSize:  16384,
+		MaxRequestBodySize: 50 * 1024 * 1024, // 50MB for large document batches
+	}
+
 	fmt.Println("Server running on http://localhost:8180")
-	if err := fasthttp.ListenAndServe(":8180", r.Handler); err != nil {
+	fmt.Println("API docs available at http://localhost:8180/docs")
+	if err := server.ListenAndServe(":8180"); err != nil {
 		fmt.Printf("Server error: %v\n", err)
 		os.Exit(1)
 	}
