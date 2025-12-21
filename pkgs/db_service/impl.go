@@ -20,30 +20,28 @@ type DbCatalogEntry struct {
 	Config map[string]string `bson:"config"`
 }
 
-type CollectionIndex struct {
-	Id   string                 `bson:"_id"`
-	Key  map[string]int         `bson:"key"`
-	Name string                 `bson:"name"`
-	Ns   string                 `bson:"ns"`
-	Type string                 `bson:"type"`
-	V    int                    `bson:"v"`
-	Opts map[string]interface{} `bson:"opts,omitempty"`
-}
+// type CollectionIndex struct {
+// 	Id   string                 `bson:"_id"`
+// 	Key  map[string]int         `bson:"key"`
+// 	Name string                 `bson:"name"`
+// 	Ns   string                 `bson:"ns"`
+// 	Type string                 `bson:"type"`
+// 	V    int                    `bson:"v"`
+// 	Opts map[string]interface{} `bson:"opts,omitempty"`
+// }
 
 type CollectionCatalogEntry struct {
-	Id               primitive.ObjectID `bson:"_id" json:"_id"`
-	Ns               string             `bson:"ns" json:"ns"`
-	TableUri         string             `bson:"table_uri" json:"table_uri"`
-	VectorIndexUri   string             `bson:"vector_index_uri" json:"vector_index_uri"`
-	IndexTableUriMap map[string]string  `bson:"index_table_uri_map,omitempty" json:"index_table_uri_map,omitempty"`
-	Indexes          []CollectionIndex  `bson:"indexes,omitempty" json:"indexes,omitempty"`
-	CreatedAt        primitive.DateTime `bson:"createdAt" json:"createdAt"`
-	UpdatedAt        primitive.DateTime `bson:"updatedAt" json:"updatedAt"`
+	Id             primitive.ObjectID `bson:"_id" json:"_id"`
+	Ns             string             `bson:"ns" json:"ns"`
+	TableUri       string             `bson:"table_uri" json:"table_uri"`
+	VectorIndexUri string             `bson:"vector_index_uri" json:"vector_index_uri"`
+	CreatedAt      primitive.DateTime `bson:"createdAt" json:"createdAt"`
+	UpdatedAt      primitive.DateTime `bson:"updatedAt" json:"updatedAt"`
 }
 
 type CollectionStats struct {
-	Doc_Count         int
-	Vector_Index_Size float64
+	Doc_Count         int     `bson:"doc_count" json:"doc_count"`
+	Vector_Index_Size float64 `bson:"vector_index_size" json:"vector_index_size"`
 }
 
 type GDBService struct {
@@ -177,12 +175,11 @@ func (s *GDBService) DeleteDB(name string) error {
 
 	// Delete each collection's resources
 	for _, collection := range collectionsToDelete {
-		// Delete the collection's table (if it exists)
-		tableExists, _ := kv.TableExists(collection.TableUri)
-		if tableExists {
-			// Note: WiredTiger doesn't have a DropTable in the interface,
-			// so we'll delete all entries from the table
-			// For now, we just delete the catalog and stats entries
+		// Drop the collection's WiredTiger table
+		if err := kv.DeleteTable(collection.TableUri); err != nil {
+			if !IsNotFoundError(err) && !IsBusyError(err) {
+				return Storage_Err(Wrap_Err(err, "failed to drop collection table %s", collection.TableUri))
+			}
 		}
 
 		// Delete vector index file
@@ -190,15 +187,13 @@ func (s *GDBService) DeleteDB(name string) error {
 			os.Remove(collection.VectorIndexUri)
 		}
 
-		// Delete collection from catalog
 		if err := kv.DeleteBinary(CATALOG, []byte(collection.Ns)); err != nil {
 			return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
 		}
 
 		// Delete stats entry
 		if err := kv.DeleteBinary(STATS, []byte(collection.Ns)); err != nil {
-			// Stats might
-			//  not exist, continue
+			return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
 		}
 	}
 

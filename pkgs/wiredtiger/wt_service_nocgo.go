@@ -16,6 +16,10 @@ func (s *nocgoService) CreateTable(name string, config string) error {
 	return errNoCgo()
 }
 
+func (s *nocgoService) DeleteTable(name string) error {
+	return errNoCgo()
+}
+
 func (s *nocgoService) TableExists(name string) (bool, error) {
 	return false, errNoCgo()
 }

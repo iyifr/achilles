@@ -1,6 +1,7 @@
 package dbservice
 
 import (
+	wt "achillesdb/pkgs/wiredtiger"
 	"errors"
 	"fmt"
 )
@@ -104,4 +105,14 @@ func Wrap_Err(err error, format string, args ...interface{}) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %w", fmt.Sprintf(format, args...), err)
+}
+
+// IsNotFoundError checks if the error is a WiredTiger "not found" error
+func IsNotFoundError(err error) bool {
+	return errors.Is(err, wt.ErrNotFound)
+}
+
+// IsBusyError checks if the error is a WiredTiger "busy" error (table has open handles)
+func IsBusyError(err error) bool {
+	return errors.Is(err, wt.ErrBusy)
 }

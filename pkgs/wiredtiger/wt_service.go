@@ -6,6 +6,7 @@ type WTService interface {
 	Open(home string, config string) error
 	Close() error
 	CreateTable(name string, config string) error
+	DeleteTable(name string) error
 	TableExists(name string) (bool, error)
 	PutString(table string, key string, value string) error
 	GetString(table string, key string) (string, bool, error)

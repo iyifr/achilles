@@ -13,6 +13,7 @@ package wiredtiger
 #include <wiredtiger.h>
 #include <stdio.h>
 #include <errno.h>
+#include <unistd.h>
 
 // ============================================================================
 // CONNECTION OPERATIONS
@@ -41,6 +42,35 @@ static int wt_create_wrap(WT_CONNECTION *conn, const char* name, const char* con
 	if (err != 0) {
 		printf("[wt_create_wrap] Failed to create table '%s', error: %d (%s)\n", name, err, wiredtiger_strerror(err));
 	}
+	int cerr = session->close(session, NULL);
+	return err != 0 ? err : cerr;
+}
+
+static int wt_drop_wrap(WT_CONNECTION *conn, const char* name) {
+	if (!conn || !name) return -1;
+	WT_SESSION *session = NULL;
+	int err = conn->open_session(conn, NULL, NULL, &session);
+	if (err != 0) {
+		printf("[wt_drop_wrap] Failed to open session, error: %d (%s)\n", err, wiredtiger_strerror(err));
+		return err;
+	}
+	if (!session) return -1;
+
+	// Use force=true to return success if object doesn't exist
+	err = session->drop(session, name, "force=true");
+
+	// If EBUSY, retry a few times with brief delays
+	int retries = 3;
+	while (err == EBUSY && retries > 0) {
+		usleep(10000); // 10ms delay
+		err = session->drop(session, name, "force=true");
+		retries--;
+	}
+
+	if (err != 0 && err != WT_NOTFOUND) {
+		printf("[wt_drop_wrap] Failed to drop table '%s', error: %d (%s)\n", name, err, wiredtiger_strerror(err));
+	}
+
 	int cerr = session->close(session, NULL);
 	return err != 0 ? err : cerr;
 }
@@ -1233,6 +1263,25 @@ func (s *cgoService) CreateTable(name string, config string) error {
 	err := C.wt_create_wrap(s.conn, cname, cconfig)
 	if err != 0 {
 		return fmt.Errorf("wiredtiger create failed with error code %d", int(err))
+	}
+	return nil
+}
+
+func (s *cgoService) DeleteTable(name string) error {
+	if s.conn == nil {
+		return errors.New("connection not open")
+	}
+	cname := C.CString(name)
+	defer C.free(unsafe.Pointer(cname))
+	err := C.wt_drop_wrap(s.conn, cname)
+	if err != 0 {
+		if err == -31803 { // WT_NOTFOUND
+			return ErrNotFound
+		}
+		if err == C.int(C.EBUSY) {
+			return ErrBusy
+		}
+		return fmt.Errorf("wiredtiger drop failed with error code %d", int(err))
 	}
 	return nil
 }
