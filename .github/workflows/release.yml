@@ -57,13 +57,13 @@ jobs:
 
             ```bash
             # Pull this version
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name#v }}
 
             # Or use latest
             docker pull ghcr.io/${{ github.repository }}:latest
 
             # Run
-            docker run -d -p 8180:8180 -v achillesdb_data:/data ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            docker run -d -p 8180:8180 -v achillesdb_data:/data ghcr.io/${{ github.repository }}:${{ github.ref_name#v }}
             ```
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
