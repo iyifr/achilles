@@ -26,22 +26,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Release Notes
+      - name: Generate Release Notes and Contributors
         id: changelog
         run: |
           # Get the previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           if [ -z "$PREV_TAG" ]; then
-            # First release - get all commits
+            # First release - get all commits and contributors
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+            CONTRIBUTORS=$(git log --format="%an <%ae>" | sort | uniq)
           else
-            # Get commits since last tag
+            # Get commits and contributors since last tag
             CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+            CONTRIBUTORS=$(git log ${PREV_TAG}..HEAD --format="%an <%ae>" | sort | uniq)
+          fi
+
+          # Format contributors nicely as a markdown list (avoid duplicates)
+          if [ -n "$CONTRIBUTORS" ]; then
+            CONTRIBUTORS_MD=$(echo "$CONTRIBUTORS" | awk '{print "- " $0}')
+          else
+            CONTRIBUTORS_MD="(none)"
           fi
 
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### Contributors" >> $GITHUB_OUTPUT
+          echo "$CONTRIBUTORS_MD" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
