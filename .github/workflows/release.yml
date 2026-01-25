@@ -56,6 +56,12 @@ jobs:
           echo "$CONTRIBUTORS_MD" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -69,13 +75,13 @@ jobs:
 
             ```bash
             # Pull this version
-            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name#v }}
+            docker pull ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
 
             # Or use latest
             docker pull ghcr.io/${{ github.repository }}:latest
 
             # Run
-            docker run -d -p 8180:8180 -v achillesdb_data:/data ghcr.io/${{ github.repository }}:${{ github.ref_name#v }}
+            docker run -d -p 8180:8180 -v achillesdb_data:/data ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
             ```
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
