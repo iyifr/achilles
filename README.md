@@ -1,8 +1,7 @@
 # AchillesDB
 
-Vector-document database built with Go, WiredTiger, and FAISS.
+Vector database built with Go, WiredTiger, and FAISS.
 
-Note: Not production ready.
 
 ## Quick Start
 
@@ -184,50 +183,16 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
 
 ### Architecture
 
-```
-    ╔═══════════════════════════════════════════════════════════════════════════╗
-    ║                                                                           ║
-    ║                         ⚡ FastHTTP API Layer ⚡                           ║
-    ║                     Minimal allocation overhead                           ║
-    ║                                                                           ║
-    ╠═══════════════════════════════════════════════════════════════════════════╣
-    ║                                                                           ║
-    ║                          🔧 Service Layer                                 ║
-    ║                     REST Handlers & Routing                               ║
-    ║                                                                           ║
-    ╠═══════════════════════════════════════════════════════════════════════════╣
-    ║                                                                           ║
-    ║                       📊 Database Service Layer                           ║
-    ║                                                                           ║
-    ╠═══════════════════════════════╦═══════════════════════════════════════════╣
-    ║                               ║                                           ║
-    ║   📁 Collection Management    ║    🔍 Vector Search Orchestration         ║
-    ║                               ║                                           ║
-    ╠═══════════════════════════════╩═══════════════════════════════════════════╣
-    ║                                                                           ║
-    ║                    💾 Storage Layer: Persistence & Indexing               ║
-    ║                                                                           ║
-    ╠═══════════════════════╦═══════════════════════╦═══════════════════════════╣
-    ║                       ║                       ║                           ║
-    ║     WiredTiger        ║         FAISS         ║      📦 BSON              ║
-    ║                       ║                       ║                           ║
-    ║   KV + B-tree Tables  ║   Vector Indexing     ║   Serialization Layer     ║
-    ║                       ║   Flat│HNSW│IVF       ║   Efficient binary JSON   ║
-    ║                       ║                       ║                           ║
-    ╚═══════════════════════╩═══════════════════════╩═══════════════════════════╝
-```
+AchillesDB combines two core components:
 
-<details>
-<summary><b>📖 Component Details</b></summary>
+1. **Document Storage**: WiredTiger + BSON for structured data with complex metadata
+2. **Vector Search**: FAISS for fast similarity search and retrieval
 
-| Component      | Role                                                                                       |
-| -------------- | ------------------------------------------------------------------------------------------ |
-| **WiredTiger** | Document persistence—metadata, content, and collection catalogs stored in B-tree tables    |
-| **FAISS**      | Vector similarity search—each collection maintains its own index file for fast ANN queries |
-| **BSON**       | Serialization layer—efficient binary encoding for complex nested documents                 |
-| **FastHTTP**   | HTTP server—high-performance, low-allocation request handling                              |
+The system bridges these through a label mapping table that connects FAISS vector IDs to document IDs, enabling hybrid search with both semantic similarity and metadata filtering.
 
-</details>
+For detailed architecture diagrams and data flow, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+
 
 ## License
 

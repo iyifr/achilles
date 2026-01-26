@@ -1,16 +1,17 @@
 ### Why Another Vector Database?
 
-The vector database with the best DX is undoubtedly ChromaDB—you should probably just use ChromaDB for most usecases.
+ChromaDB has excellent developer experience and you should probably use it for most cases.
 
-But here's the thing: ChromaDB's TypeScript SDK doesn't support arrays as metadata values. This limitation makes a whole class of features (like ACL-based filtering) harder than it needs to be.
+However, ChromaDB's TypeScript SDK has a critical limitation: **no support for arrays as metadata values**. This makes it difficult to implement features like access control lists (ACLs), multi-tag filtering, or any scenario where you need to store multiple values for a single metadata field.
 
-The other reason? **WiredTiger.** A powerful NoSQL engine I discovered during my weekly tinkering sessions on GitHub. Reading its source code was my gateway drug into databases and data systems. So I thought—why not combine all of these cool primitives into one product?
+The second motivation is **WiredTiger**—a high-performance storage engine that caught my attention. Its architecture and source code sparked my interest in database internals. Building AchillesDB became an opportunity to combine WiredTiger's robust storage capabilities with FAISS's vector search performance, creating a vector database that handles complex metadata scenarios elegantly.
 
 ---
 
 ### The Two Pillars
+A vector database enables fast retrieval of relevant documents from a large corpus by comparing query embeddings against stored document embeddings. 
 
-At its core, a vector database helps you quickly retrieve relevant text chunks for a query. You only need **two abstractions**:
+This requires **two core components**:
 
 1. Document store
 2. A vector index
@@ -73,7 +74,7 @@ Then you need a bridge between the two abstractions.
     ╚══════════════════════════════════════════════════════════════════╝
 ```
 
-BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you marshal any arbitrary struct into `[]byte`. We can store this in a Wiredtiger table easily.
+BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you marshal any arbitrary struct into `[]byte`. We can store this in a Wiredtiger table.
 
 ---
 
@@ -155,7 +156,6 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
                                     ▼
     ╭───────────────────────────────────────────────────────────────────╮
     │                      📄 RETRIEVED DOCUMENTS                       │
-    │                   Ready for your pipeline                         │
     ╰───────────────────────────────────────────────────────────────────╯
 ```
 

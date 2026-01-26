@@ -1,6 +1,4 @@
 # docker-compose.prod.yml
-# Production overrides for AchillesDB
-#
 # Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 services:
