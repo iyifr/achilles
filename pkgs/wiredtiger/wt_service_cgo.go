@@ -1177,6 +1177,86 @@ static int wt_range_scan_next_batch_bin(wt_range_ctx_bin_t* ctx, size_t max_buf_
 
 static void wt_free_batch_buf_bin(unsigned char *buf) { if (buf) free(buf); }
 
+// ============================================================================
+// BATCH WRITER OPERATIONS
+// ============================================================================
+
+typedef struct {
+    WT_SESSION *session;
+    WT_CURSOR *cursor;
+    int is_binary;  // 1 for binary format, 0 for string format
+} wt_batch_ctx_t;
+
+// Open a batch writer context - keeps session and cursor open for multiple writes
+static wt_batch_ctx_t* wt_batch_open(WT_CONNECTION *conn, const char* uri, int is_binary) {
+    if (!conn || !uri) return NULL;
+
+    wt_batch_ctx_t *ctx = (wt_batch_ctx_t*)calloc(1, sizeof(wt_batch_ctx_t));
+    if (!ctx) return NULL;
+
+    ctx->is_binary = is_binary;
+
+    int err = conn->open_session(conn, NULL, NULL, &ctx->session);
+    if (err != 0 || !ctx->session) {
+        free(ctx);
+        return NULL;
+    }
+
+    err = ctx->session->open_cursor(ctx->session, uri, NULL, NULL, &ctx->cursor);
+    if (err != 0 || !ctx->cursor) {
+        ctx->session->close(ctx->session, NULL);
+        free(ctx);
+        return NULL;
+    }
+
+    return ctx;
+}
+
+// Write a binary key-value pair using batch context
+static int wt_batch_put_bin(wt_batch_ctx_t *ctx,
+                            const unsigned char* key, size_t key_len,
+                            const unsigned char* val, size_t val_len) {
+    if (!ctx || !ctx->cursor || !key || !val) return -1;
+
+    WT_ITEM key_item;
+    key_item.data = (void*)key;
+    key_item.size = key_len;
+    ctx->cursor->set_key(ctx->cursor, &key_item);
+
+    WT_ITEM val_item;
+    val_item.data = (void*)val;
+    val_item.size = val_len;
+    ctx->cursor->set_value(ctx->cursor, &val_item);
+
+    return ctx->cursor->insert(ctx->cursor);
+}
+
+// Write a string key-value pair using batch context
+static int wt_batch_put_str(wt_batch_ctx_t *ctx, const char* key, const char* val) {
+    if (!ctx || !ctx->cursor || !key || !val) return -1;
+
+    ctx->cursor->set_key(ctx->cursor, key);
+    ctx->cursor->set_value(ctx->cursor, val);
+
+    return ctx->cursor->insert(ctx->cursor);
+}
+
+// Close the batch context and release resources
+static int wt_batch_close(wt_batch_ctx_t *ctx) {
+    if (!ctx) return 0;
+
+    int err = 0;
+    if (ctx->cursor) {
+        err = ctx->cursor->close(ctx->cursor);
+    }
+    if (ctx->session) {
+        int serr = ctx->session->close(ctx->session, NULL);
+        if (err == 0) err = serr;
+    }
+    free(ctx);
+    return err;
+}
+
 */
 import "C"
 import (
@@ -1917,4 +1997,107 @@ func (c *binaryRangeCursor) SetBatchSize(size int) {
 // GetBatchSize returns the current batch size
 func (c *binaryRangeCursor) GetBatchSize() int {
 	return c.maxBatchSize
+}
+
+// ============================================================================
+// BATCH WRITER IMPLEMENTATION
+// ============================================================================
+
+type cgoBatchWriter struct {
+	ctx      *C.wt_batch_ctx_t
+	conn     *C.WT_CONNECTION
+	table    string
+	isBinary bool
+	closed   bool
+}
+
+// NewBatchWriter creates a new batch writer for efficient bulk inserts.
+// The writer keeps a single session and cursor open for all writes.
+func (s *cgoService) NewBatchWriter(table string) (BatchWriter, error) {
+	if s.conn == nil {
+		return nil, errors.New("connection not open")
+	}
+
+	ctable := C.CString(table)
+	defer C.free(unsafe.Pointer(ctable))
+
+	// Determine if table uses binary or string format based on table name
+	// Tables with binary format: collection tables, _catalog, _stats
+	// Tables with string format: label_docID
+	isBinary := table != "table:label_docID"
+
+	var isBinaryC C.int = 0
+	if isBinary {
+		isBinaryC = 1
+	}
+
+	ctx := C.wt_batch_open(s.conn, ctable, isBinaryC)
+	if ctx == nil {
+		return nil, fmt.Errorf("failed to open batch writer for table %s", table)
+	}
+
+	return &cgoBatchWriter{
+		ctx:      ctx,
+		conn:     s.conn,
+		table:    table,
+		isBinary: isBinary,
+		closed:   false,
+	}, nil
+}
+
+func (w *cgoBatchWriter) PutBinary(key, value []byte) error {
+	if w.closed || w.ctx == nil {
+		return errors.New("batch writer is closed")
+	}
+	if len(key) == 0 || len(value) == 0 {
+		return errors.New("key and value cannot be empty")
+	}
+
+	err := C.wt_batch_put_bin(w.ctx,
+		(*C.uchar)(unsafe.Pointer(&key[0])), C.size_t(len(key)),
+		(*C.uchar)(unsafe.Pointer(&value[0])), C.size_t(len(value)))
+
+	if err != 0 {
+		return fmt.Errorf("batch put binary failed: %d", int(err))
+	}
+	return nil
+}
+
+func (w *cgoBatchWriter) PutString(key, value string) error {
+	if w.closed || w.ctx == nil {
+		return errors.New("batch writer is closed")
+	}
+
+	ckey := C.CString(key)
+	cval := C.CString(value)
+	defer C.free(unsafe.Pointer(ckey))
+	defer C.free(unsafe.Pointer(cval))
+
+	err := C.wt_batch_put_str(w.ctx, ckey, cval)
+	if err != 0 {
+		return fmt.Errorf("batch put string failed: %d", int(err))
+	}
+	return nil
+}
+
+func (w *cgoBatchWriter) Commit() error {
+	// WiredTiger auto-commits on cursor operations when not in explicit transaction
+	// For now, this is a no-op but could be extended to use explicit transactions
+	return nil
+}
+
+func (w *cgoBatchWriter) Close() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+
+	if w.ctx != nil {
+		err := C.wt_batch_close(w.ctx)
+		w.ctx = nil
+		if err != 0 {
+			return fmt.Errorf("batch close failed: %d", int(err))
+		}
+	}
+	return nil
 }

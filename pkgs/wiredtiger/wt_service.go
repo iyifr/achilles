@@ -25,6 +25,7 @@ type WTService interface {
 	DeleteBinaryWithStringKey(table string, stringKey string) error
 	ScanRange(table string, startKey string, endKey string) (StringRangeCursor, error)
 	ScanRangeBinary(table string, startKey, endKey []byte) (BinaryRangeCursor, error)
+	NewBatchWriter(table string) (BatchWriter, error)
 }
 
 func WiredTiger() WTService {
@@ -61,4 +62,17 @@ type BinaryRangeCursor interface {
 	Valid() bool
 	SetBatchSize(size int) // Configure batch size
 	GetBatchSize() int     // Get current batch size
+}
+
+// BatchWriter provides efficient batch writing within a single session.
+// This avoids the overhead of opening/closing sessions for each write.
+type BatchWriter interface {
+	// PutBinary writes a binary key-value pair
+	PutBinary(key, value []byte) error
+	// PutString writes a string key-value pair
+	PutString(key, value string) error
+	// Commit commits all pending writes
+	Commit() error
+	// Close releases resources (auto-commits if not already committed)
+	Close() error
 }
