@@ -382,7 +382,6 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 	}
 
 	kv := s.KvService
-	vectr := faiss.FAISS()
 
 	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
@@ -402,19 +401,23 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 
 	vectorIndexFilePath := collection.VectorIndexUri
 
-	idx, err := vectr.ReadIndex(vectorIndexFilePath)
-	if err != nil {
-		if len(documents[0].Embedding) == 0 {
-			return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", documents[0].Id))
-		}
-		const indexDesc = "Flat"
-		idx, err = vectr.IndexFactory(len(documents[0].Embedding), indexDesc, faiss.MetricL2)
-		if err != nil {
-			return Internal_Err(Wrap_Err(err, "failed to create new vector index"))
-		}
+	// Validate first document has embedding before getting/creating index
+	if len(documents[0].Embedding) == 0 {
+		return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", documents[0].Id))
 	}
-	defer idx.Free()
 
+	// Use cached index (avoids disk read on every insert)
+	indexCache := faiss.GlobalIndexCache()
+	cachedIdx, err := indexCache.GetOrCreate(vectorIndexFilePath, len(documents[0].Embedding))
+	if err != nil {
+		return Internal_Err(Wrap_Err(err, "failed to get or create vector index"))
+	}
+
+	// Lock the index for exclusive access during this insert operation
+	cachedIdx.Lock()
+	defer cachedIdx.Unlock()
+
+	idx := cachedIdx.Index
 	destTableURI := collection.TableUri
 
 	startLabel, err := idx.NTotal()
@@ -428,6 +431,13 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 	var embeddings []float32
 	labelMappings := make([]string, numDocs)
 
+	// Use batch writer for document inserts (single session for all writes)
+	docWriter, err := s.KvService.NewBatchWriter(destTableURI)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to create batch writer for documents"))
+	}
+	defer docWriter.Close()
+
 	// Insert documents into KV store and validate embeddings
 	for i, doc := range documents {
 		// Validate embedding
@@ -437,40 +447,61 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 
 		if i == 0 {
 			embeddingDim = len(doc.Embedding)
-			embeddings = make([]float32, numDocs*embeddingDim) // Resize with correct dimension
+			embeddings = make([]float32, numDocs*embeddingDim) // Pre-allocate with correct dimension
 		} else if len(doc.Embedding) != embeddingDim {
 			return InvalidInput_Err(fmt.Errorf("document %s has embedding dimension %d, expected %d", doc.Id, len(doc.Embedding), embeddingDim))
 		}
 
-		doc_bytes, err := bson.Marshal(doc)
+		doc_bytes, release, err := MarshalWithPool(doc)
 		if err != nil {
 			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
 		}
 
 		key := []byte(doc.Id)
-		if err := s.KvService.PutBinary(destTableURI, key, doc_bytes); err != nil {
+		if err := docWriter.PutBinary(key, doc_bytes); err != nil {
+			release() // Return buffer to pool on error
 			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
 		}
+		release() // Return buffer to pool after successful write
 
 		// Copy embedding data
 		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
 		labelMappings[i] = doc.Id
 	}
 
+	// Commit document batch
+	if err := docWriter.Commit(); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to commit document batch"))
+	}
+
 	if err := idx.Add(embeddings, len(documents)); err != nil {
 		return Internal_Err(Wrap_Err(err, "failed to add embeddings to index"))
 	}
 
+	// Use batch writer for label mappings (single session for all writes)
+	labelWriter, err := s.KvService.NewBatchWriter(LABELS_TO_DOC_ID_MAPPING_TABLE_URI)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to create batch writer for labels"))
+	}
+	defer labelWriter.Close()
+
 	for i, docID := range labelMappings {
 		label := startLabel + int64(i)
-		if err := s.KvService.PutString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, fmt.Sprintf("%d", label), docID); err != nil {
+		if err := labelWriter.PutString(fmt.Sprintf("%d", label), docID); err != nil {
 			return Storage_Err(Wrap_Err(err, "failed to write label->docID mapping for label %d", label))
 		}
 	}
 
+	// Commit label batch
+	if err := labelWriter.Commit(); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to commit label batch"))
+	}
+
+	// Write index to disk (we already hold the lock, so write directly)
 	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to write index to file"))
 	}
+	cachedIdx.Dirty = false
 
 	info, err := os.Stat(vectorIndexFilePath)
 	if err != nil {
