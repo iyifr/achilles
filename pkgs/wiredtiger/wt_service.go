@@ -1,7 +1,13 @@
 package wiredtiger
 
-// Service provides a minimal API for interacting with WiredTiger.
-// This abstracts the underlying cgo implementation to allow testing and !cgo builds.
+type TABLE_VALUE_FORMATS int
+
+const (
+	VALUE_FORMAT_BINARY TABLE_VALUE_FORMATS = iota
+	VALUE_FORMAT_STRING
+)
+
+// Service provides an interface for calling WiredTiger.
 type WTService interface {
 	Open(home string, config string) error
 	Close() error
@@ -25,7 +31,7 @@ type WTService interface {
 	DeleteBinaryWithStringKey(table string, stringKey string) error
 	ScanRange(table string, startKey string, endKey string) (StringRangeCursor, error)
 	ScanRangeBinary(table string, startKey, endKey []byte) (BinaryRangeCursor, error)
-	NewBatchWriter(table string) (BatchWriter, error)
+	NewBatchWriter(table string, table_type TABLE_VALUE_FORMATS) (BatchWriter, error)
 }
 
 func WiredTiger() WTService {
@@ -65,14 +71,9 @@ type BinaryRangeCursor interface {
 }
 
 // BatchWriter provides efficient batch writing within a single session.
-// This avoids the overhead of opening/closing sessions for each write.
 type BatchWriter interface {
-	// PutBinary writes a binary key-value pair
 	PutBinary(key, value []byte) error
-	// PutString writes a string key-value pair
 	PutString(key, value string) error
-	// Commit commits all pending writes
 	Commit() error
-	// Close releases resources (auto-commits if not already committed)
 	Close() error
 }

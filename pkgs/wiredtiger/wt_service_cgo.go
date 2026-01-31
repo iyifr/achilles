@@ -2013,21 +2013,16 @@ type cgoBatchWriter struct {
 
 // NewBatchWriter creates a new batch writer for efficient bulk inserts.
 // The writer keeps a single session and cursor open for all writes.
-func (s *cgoService) NewBatchWriter(table string) (BatchWriter, error) {
+func (s *cgoService) NewBatchWriter(table string, table_type TABLE_VALUE_FORMATS) (BatchWriter, error) {
 	if s.conn == nil {
 		return nil, errors.New("connection not open")
 	}
 
 	ctable := C.CString(table)
 	defer C.free(unsafe.Pointer(ctable))
-
-	// Determine if table uses binary or string format based on table name
-	// Tables with binary format: collection tables, _catalog, _stats
-	// Tables with string format: label_docID
-	isBinary := table != "table:label_docID"
-
 	var isBinaryC C.int = 0
-	if isBinary {
+	isBinaryTable := table_type == VALUE_FORMAT_BINARY
+	if isBinaryTable {
 		isBinaryC = 1
 	}
 
@@ -2040,7 +2035,7 @@ func (s *cgoService) NewBatchWriter(table string) (BatchWriter, error) {
 		ctx:      ctx,
 		conn:     s.conn,
 		table:    table,
-		isBinary: isBinary,
+		isBinary: isBinaryTable,
 		closed:   false,
 	}, nil
 }

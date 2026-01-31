@@ -376,6 +376,7 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 		Stats:     stats,
 	}, nil
 }
+
 func (s *GDBService) InsertDocuments(collection_name string, documents []GlowstickDocument) error {
 	if len(documents) == 0 {
 		return InvalidInput_Err(ErrEmptyDocuments)
@@ -432,44 +433,42 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 	labelMappings := make([]string, numDocs)
 
 	// Use batch writer for document inserts (single session for all writes)
-	docWriter, err := s.KvService.NewBatchWriter(destTableURI)
+	docWriter, err := s.KvService.NewBatchWriter(destTableURI, wt.VALUE_FORMAT_BINARY)
 	if err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to create batch writer for documents"))
 	}
 	defer docWriter.Close()
 
-	// Insert documents into KV store and validate embeddings
 	for i, doc := range documents {
-		// Validate embedding
 		if len(doc.Embedding) == 0 {
 			return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", doc.Id))
 		}
 
 		if i == 0 {
 			embeddingDim = len(doc.Embedding)
-			embeddings = make([]float32, numDocs*embeddingDim) // Pre-allocate with correct dimension
+			embeddings = make([]float32, numDocs*embeddingDim)
 		} else if len(doc.Embedding) != embeddingDim {
 			return InvalidInput_Err(fmt.Errorf("document %s has embedding dimension %d, expected %d", doc.Id, len(doc.Embedding), embeddingDim))
 		}
 
-		doc_bytes, release, err := MarshalWithPool(doc)
+		doc_bytes, release, err := BsonMarshalWithPool(doc)
+		defer release()
+
 		if err != nil {
 			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
 		}
 
 		key := []byte(doc.Id)
 		if err := docWriter.PutBinary(key, doc_bytes); err != nil {
-			release() // Return buffer to pool on error
 			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
 		}
-		release() // Return buffer to pool after successful write
 
-		// Copy embedding data
+		// Put embedding data from current doc in embeddings array.
+		// Note: We can skip this extra copy if we switch the API to use SOA pattern.
 		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
 		labelMappings[i] = doc.Id
 	}
 
-	// Commit document batch
 	if err := docWriter.Commit(); err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to commit document batch"))
 	}
@@ -479,7 +478,7 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 	}
 
 	// Use batch writer for label mappings (single session for all writes)
-	labelWriter, err := s.KvService.NewBatchWriter(LABELS_TO_DOC_ID_MAPPING_TABLE_URI)
+	labelWriter, err := s.KvService.NewBatchWriter(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, wt.VALUE_FORMAT_STRING)
 	if err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to create batch writer for labels"))
 	}
@@ -497,7 +496,7 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Storage_Err(Wrap_Err(err, "failed to commit label batch"))
 	}
 
-	// Write index to disk (we already hold the lock, so write directly)
+	// Write index
 	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
 		return Storage_Err(Wrap_Err(err, "failed to write index to file"))
 	}

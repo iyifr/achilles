@@ -27,7 +27,7 @@ var bsonBufferPool = sync.Pool{
 //	data, release := MarshalWithPool(doc)
 //	defer release()
 //	// use data...
-func MarshalWithPool(v any) ([]byte, func(), error) {
+func BsonMarshalWithPool(v any) ([]byte, func(), error) {
 	buf := bsonBufferPool.Get().(*bytes.Buffer)
 	buf.Reset() // Reset buffer for reuse
 
