@@ -2,6 +2,7 @@ package dbservice
 
 import (
 	wt "achillesdb/pkgs/wiredtiger"
+	"fmt"
 	"os"
 
 	"go.uber.org/zap"
@@ -25,6 +26,64 @@ type GlowstickDocument struct {
 	Content   string                 `bson:"content" json:"content"`
 	Embedding []float32              `bson:"embedding" json:"-"`
 	Metadata  map[string]interface{} `bson:"metadata" json:"metadata"`
+}
+
+// GlowstickDocumentSOA represents documents in ChromaDB-compatible SOA (Struct of Arrays) format.
+// This format is more efficient for batch operations as embeddings are already in the flat
+// layout required by FAISS, avoiding per-document copy operations.
+type GlowstickDocumentSOA struct {
+	Ids        []string                   `json:"ids" bson:"ids"`
+	Contents   []string                   `json:"contents" bson:"contents"`
+	Embeddings []float32                  `json:"embeddings" bson:"embeddings"` // Flat array: [doc1_emb..., doc2_emb..., ...]
+	Metadatas  []map[string]interface{}   `json:"metadatas" bson:"metadatas"`
+}
+
+// Validate checks that all arrays have consistent lengths and embeddings dimension is valid.
+// Returns error with detailed context if validation fails.
+func (soa *GlowstickDocumentSOA) Validate() error {
+	numDocs := len(soa.Ids)
+
+	if numDocs == 0 {
+		return fmt.Errorf("ids array cannot be empty")
+	}
+
+	if len(soa.Contents) != numDocs {
+		return fmt.Errorf("length mismatch: ids=%d, contents=%d", numDocs, len(soa.Contents))
+	}
+
+	if len(soa.Metadatas) != numDocs {
+		return fmt.Errorf("length mismatch: ids=%d, metadatas=%d", numDocs, len(soa.Metadatas))
+	}
+
+	if len(soa.Embeddings) == 0 {
+		return fmt.Errorf("embeddings array cannot be empty")
+	}
+
+	if len(soa.Embeddings)%numDocs != 0 {
+		return fmt.Errorf("embeddings length (%d) must be divisible by number of documents (%d)",
+			len(soa.Embeddings), numDocs)
+	}
+
+	embeddingDim := len(soa.Embeddings) / numDocs
+	if embeddingDim == 0 {
+		return fmt.Errorf("embedding dimension cannot be zero")
+	}
+
+	return nil
+}
+
+// EmbeddingDimension returns the dimension of each embedding vector.
+// Assumes Validate() has already been called.
+func (soa *GlowstickDocumentSOA) EmbeddingDimension() int {
+	if len(soa.Ids) == 0 {
+		return 0
+	}
+	return len(soa.Embeddings) / len(soa.Ids)
+}
+
+// DocumentCount returns the number of documents in the SOA structure.
+func (soa *GlowstickDocumentSOA) DocumentCount() int {
+	return len(soa.Ids)
 }
 
 type QueryStruct struct {
@@ -64,6 +123,7 @@ type DBService interface {
 	DeleteCollection(collection_name string) error
 	GetCollection(collection_name string) (CollectionEntry, error)
 	InsertDocuments(collection_name string, documents []GlowstickDocument) error
+	InsertDocumentsSOA(collection_name string, documents *GlowstickDocumentSOA) error
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
 	DeleteDocuments(collection_name string, documentIds []string) error
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)

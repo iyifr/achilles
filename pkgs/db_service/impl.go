@@ -720,6 +720,159 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 	return nil
 }
 
+func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *GlowstickDocumentSOA) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("insert_documents_soa_start", "collection", collection_name, "doc_count", documents.DocumentCount())
+	}
+
+	// Validate input structure
+	if err := documents.Validate(); err != nil {
+		return InvalidInput_Err(Wrap_Err(err, "invalid SOA document structure"))
+	}
+
+	kv := s.KvService
+	numDocs := documents.DocumentCount()
+	embeddingDim := documents.EmbeddingDimension()
+
+	// Get collection metadata
+	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
+	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
+
+	if !exists {
+		return NotFound_Err(ErrCollectionNotFound)
+	}
+
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
+	}
+
+	var collection CollectionCatalogEntry
+	if err := bson.Unmarshal(val, &collection); err != nil {
+		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
+	}
+
+	vectorIndexFilePath := collection.VectorIndexUri
+
+	// Use cached index (avoids disk read on every insert)
+	indexCache := faiss.GlobalIndexCache()
+	cachedIdx, err := indexCache.GetOrCreate(vectorIndexFilePath, embeddingDim)
+	if err != nil {
+		return Internal_Err(Wrap_Err(err, "failed to get or create vector index"))
+	}
+
+	// Lock the index for exclusive access during this insert operation
+	cachedIdx.Lock()
+	defer cachedIdx.Unlock()
+
+	idx := cachedIdx.Index
+	destTableURI := collection.TableUri
+
+	startLabel, err := idx.NTotal()
+	if err != nil {
+		return Internal_Err(Wrap_Err(err, "failed to get index size"))
+	}
+
+	// Use batch writer for document inserts (single session for all writes)
+	docWriter, err := s.KvService.NewBatchWriter(destTableURI, wt.VALUE_FORMAT_BINARY)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to create batch writer for documents"))
+	}
+	defer docWriter.Close()
+
+	// Insert each document into WiredTiger
+	for i := 0; i < numDocs; i++ {
+		doc := GlowstickDocument{
+			Id:        documents.Ids[i],
+			Content:   documents.Contents[i],
+			Embedding: nil, // Don't store embedding in BSON (already in FAISS)
+			Metadata:  documents.Metadatas[i],
+		}
+
+		doc_bytes, release, err := BsonMarshalWithPool(doc)
+		defer release()
+
+		if err != nil {
+			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
+		}
+
+		key := []byte(doc.Id)
+		if err := docWriter.PutBinary(key, doc_bytes); err != nil {
+			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
+		}
+	}
+
+	if err := docWriter.Commit(); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to commit document batch"))
+	}
+
+	if err := idx.Add(documents.Embeddings, numDocs); err != nil {
+		return Internal_Err(Wrap_Err(err, "failed to add embeddings to index"))
+	}
+
+	// Use batch writer for label mappings (single session for all writes)
+	labelWriter, err := s.KvService.NewBatchWriter(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, wt.VALUE_FORMAT_STRING)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to create batch writer for labels"))
+	}
+	defer labelWriter.Close()
+
+	for i := 0; i < numDocs; i++ {
+		label := startLabel + int64(i)
+		if err := labelWriter.PutString(fmt.Sprintf("%d", label), documents.Ids[i]); err != nil {
+			return Storage_Err(Wrap_Err(err, "failed to write label->docID mapping for label %d", label))
+		}
+	}
+
+	// Commit label batch
+	if err := labelWriter.Commit(); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to commit label batch"))
+	}
+
+	// Write index to disk
+	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to write index to file"))
+	}
+	cachedIdx.Dirty = false
+
+	// Update collection statistics
+	info, err := os.Stat(vectorIndexFilePath)
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to stat vector index file"))
+	}
+
+	hot_stats, statsExists, err := kv.GetBinary(STATS, []byte(collectionDefKey))
+	if err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to fetch hot stats"))
+	}
+	if !statsExists {
+		return Storage_Err(fmt.Errorf("collection stats not found for %s", collectionDefKey))
+	}
+
+	var hot_stats_doc CollectionStats
+	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
+		return Serialization_Err(Wrap_Err(err, "failed to unmarshal hot stats"))
+	}
+
+	hot_stats_doc.Doc_Count += numDocs
+	hot_stats_doc.Vector_Index_Size = float64(info.Size())
+
+	hot_stats_doc_bytes, err := bson.Marshal(hot_stats_doc)
+	if err != nil {
+		return Serialization_Err(Wrap_Err(err, "failed to marshal hot stats"))
+	}
+
+	if err := kv.PutBinary(STATS, []byte(collectionDefKey), hot_stats_doc_bytes); err != nil {
+		return Storage_Err(Wrap_Err(err, "failed to write hot stats"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("insert_documents_soa_complete", "collection", collection_name, "doc_count", numDocs, "duration_ms", duration.Milliseconds())
+	}
+	return nil
+}
+
 func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error) {
 	start := time.Now()
 	if s.Logger != nil {

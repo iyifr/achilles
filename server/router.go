@@ -219,24 +219,67 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
 
-	var requestBody struct {
-		Documents []GlowstickDocumentPayload `json:"documents"`
+	var soaRequest struct {
+		Ids        []string                 `json:"ids"`
+		Documents  []string                 `json:"documents"`  // Maps to Contents
+		Embeddings [][]float32              `json:"embeddings"` // Array of arrays
+		Metadatas  []map[string]interface{} `json:"metadatas"`
 	}
 
-	if err := json.Unmarshal(ctx.Request.Body(), &requestBody); err != nil {
+	if err := json.Unmarshal(ctx.Request.Body(), &soaRequest); err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
-		ctx.WriteString("Invalid JSON payload")
+		ctx.SetContentType("application/json")
+		ctx.Write([]byte(`{"error":"Invalid JSON: expected {ids, documents, embeddings, metadatas}"}`))
 		return
 	}
 
-	documents := make([]dbservice.GlowstickDocument, len(requestBody.Documents))
-	for i, doc := range requestBody.Documents {
-		documents[i] = dbservice.GlowstickDocument{
-			Id:        doc.Id,
-			Content:   doc.Content,
-			Embedding: doc.Embedding,
-			Metadata:  doc.Metadata,
+	// Validate array lengths
+	numDocs := len(soaRequest.Ids)
+	if numDocs == 0 {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("application/json")
+		ctx.Write([]byte(`{"error":"ids array cannot be empty"}`))
+		return
+	}
+
+	if len(soaRequest.Documents) != numDocs ||
+		len(soaRequest.Embeddings) != numDocs ||
+		len(soaRequest.Metadatas) != numDocs {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("application/json")
+		ctx.Write([]byte(fmt.Sprintf(`{"error":"array length mismatch: ids=%d, docs=%d, emb=%d, meta=%d"}`,
+			numDocs, len(soaRequest.Documents), len(soaRequest.Embeddings), len(soaRequest.Metadatas))))
+		return
+	}
+
+	// Validate and flatten embeddings: [][]float32 → []float32
+	if numDocs > 0 && len(soaRequest.Embeddings[0]) == 0 {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("application/json")
+		ctx.Write([]byte(`{"error":"embedding vectors cannot be empty"}`))
+		return
+	}
+
+	embeddingDim := len(soaRequest.Embeddings[0])
+	flatEmbeddings := make([]float32, numDocs*embeddingDim)
+
+	for i, embedding := range soaRequest.Embeddings {
+		if len(embedding) != embeddingDim {
+			ctx.SetStatusCode(fasthttp.StatusBadRequest)
+			ctx.SetContentType("application/json")
+			ctx.Write([]byte(fmt.Sprintf(`{"error":"dimension mismatch at index %d: expected %d, got %d"}`,
+				i, embeddingDim, len(embedding))))
+			return
 		}
+		copy(flatEmbeddings[i*embeddingDim:(i+1)*embeddingDim], embedding)
+	}
+
+	// Build SOA.
+	soa := &dbservice.GlowstickDocumentSOA{
+		Ids:        soaRequest.Ids,
+		Contents:   soaRequest.Documents,
+		Embeddings: flatEmbeddings,
+		Metadatas:  soaRequest.Metadatas,
 	}
 
 	db := dbservice.DatabaseService(dbservice.DbParams{
@@ -245,14 +288,15 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		Logger:    log,
 	})
 
-	err := db.InsertDocuments(collection_name, documents)
+	err := db.InsertDocumentsSOA(collection_name, soa)
 	if err != nil {
 		handleError(ctx, err)
 		return
 	}
+
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
-	ctx.Write([]byte(`{"message":"Documents inserted into collection successfully"}`))
+	ctx.Write([]byte(`{"message":"Documents inserted successfully"}`))
 }
 func GetDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	log := getLogger(ctx)
@@ -293,7 +337,7 @@ func QueryDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	var database = ctx.UserValue("database_name").(string)
 	var collection = ctx.UserValue("collection_name").(string)
 
-	var requestBody struct{
+	var requestBody struct {
 		TopK           int            `json:"top_k"`
 		QueryEmbedding []float32      `json:"query_embedding"`
 		Filters        map[string]any `json:"where"`

@@ -136,6 +136,73 @@ func BenchmarkInsertDocumentsBatchSizes(b *testing.B) {
 	}
 }
 
+// BenchmarkInsertDocumentsSOA benchmarks the new SOA-based insertion method.
+func BenchmarkInsertDocumentsSOA(b *testing.B) {
+	benchCases := []struct {
+		name         string
+		docCount     int
+		embeddingDim int
+	}{
+		{"10docs_128dim_SOA", 10, 128},
+		{"10docs_512dim_SOA", 10, 512},
+		{"10docs_1536dim_SOA", 10, 1536},
+		{"50docs_1536dim_SOA", 50, 1536},
+		{"100docs_1536dim_SOA", 100, 1536},
+		{"500docs_1536dim_SOA", 500, 1536},
+	}
+
+	for _, bc := range benchCases {
+		b.Run(bc.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				wtService, dbSvc, cleanup := setupBenchDB(b, fmt.Sprintf("bench_%s_%d", bc.name, i))
+				collName := "bench_collection_soa"
+
+				if err := dbSvc.CreateDB(); err != nil {
+					b.Fatalf("Failed to create DB: %v", err)
+				}
+				if err := dbSvc.CreateCollection(collName); err != nil {
+					b.Fatalf("Failed to create collection: %v", err)
+				}
+
+				soa := generateSOADocuments(bc.docCount, bc.embeddingDim)
+
+				b.StartTimer()
+				err := dbSvc.InsertDocumentsSOA(collName, soa)
+				b.StopTimer()
+
+				if err != nil {
+					b.Fatalf("InsertDocumentsSOA failed: %v", err)
+				}
+
+				wtService.Close()
+				cleanup()
+			}
+		})
+	}
+}
+
+// generateSOADocuments creates test documents in SOA format for benchmarking.
+func generateSOADocuments(count, embeddingDim int) *dbservice.GlowstickDocumentSOA {
+	soa := &dbservice.GlowstickDocumentSOA{
+		Ids:        make([]string, count),
+		Contents:   make([]string, count),
+		Embeddings: make([]float32, count*embeddingDim),
+		Metadatas:  make([]map[string]interface{}, count),
+	}
+
+	for i := 0; i < count; i++ {
+		soa.Ids[i] = primitive.NewObjectID().Hex()
+		soa.Contents[i] = fmt.Sprintf("Benchmark SOA document number %d with some additional content for testing purposes.", i+1)
+		soa.Metadatas[i] = map[string]interface{}{"type": "benchmark_soa", "index": i + 1, "category": "test"}
+
+		embedding := genNormalizedEmbeddings(embeddingDim)
+		copy(soa.Embeddings[i*embeddingDim:(i+1)*embeddingDim], embedding)
+	}
+
+	return soa
+}
+
 // setupBenchDB creates a temporary WiredTiger database for benchmarking.
 func setupBenchDB(b *testing.B, dirName string) (wt.WTService, dbservice.DBService, func()) {
 	b.Helper()

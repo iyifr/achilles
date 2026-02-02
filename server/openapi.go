@@ -225,6 +225,10 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
     post:
       summary: Insert documents into a collection
+      description: |
+        Insert documents into AchillesDb
+        All arrays (ids, documents, embeddings, metadatas) must have the same length.
+        Each embedding array must have the same dimension.
       tags:
         - Documents
       parameters:
@@ -245,12 +249,46 @@ paths:
             schema:
               type: object
               required:
+                - ids
                 - documents
+                - embeddings
+                - metadatas
               properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+                  description: Array of unique document IDs
+                  example: ["doc1", "doc2", "doc3"]
                 documents:
                   type: array
                   items:
-                    $ref: '#/components/schemas/DocumentInput'
+                    type: string
+                  description: Array of document content/text
+                  example: ["First document content", "Second document", "Third document"]
+                embeddings:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: number
+                      format: float
+                  description: Array of embedding vectors (one per document)
+                  example: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]
+                metadatas:
+                  type: array
+                  items:
+                    type: object
+                  description: Array of metadata objects (one per document)
+                  example: [{"type": "test", "index": 1}, {"type": "test", "index": 2}, {"type": "test", "index": 3}]
+            examples:
+              upload docs :
+                summary: (ChromaDB-compatible)
+                value:
+                  ids: ["doc1", "doc2"]
+                  documents: ["First content", "Second content"]
+                  embeddings: [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+                  metadatas: [{"source": "test"}, {"source": "test"}]
       responses:
         '200':
           description: Documents inserted successfully
@@ -259,11 +297,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
         '400':
-          description: Invalid input
+          description: Invalid input - array length mismatch, dimension mismatch, or empty arrays
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                array_length_mismatch:
+                  summary: Array length mismatch
+                  value:
+                    error: "array length mismatch: ids=100, docs=100, emb=99, meta=100"
+                dimension_mismatch:
+                  summary: Embedding dimension mismatch
+                  value:
+                    error: "dimension mismatch at index 42: expected 1536, got 512"
+                empty_arrays:
+                  summary: Empty arrays
+                  value:
+                    error: "ids array cannot be empty"
         '404':
           description: Collection not found
           content:

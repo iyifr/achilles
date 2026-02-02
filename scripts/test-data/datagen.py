@@ -70,8 +70,12 @@ def main():
     # Using a popular, efficient model supported by FastEmbed
     model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
-    documents_payload = []
-    
+    # Initialize SOA (Struct of Arrays) format
+    ids = []
+    contents = []
+    embeddings = []
+    metadatas = []
+
     if not os.path.exists(DOC_CORPUS_DIR):
         print(f"Error: Directory '{DOC_CORPUS_DIR}' not found.")
         return
@@ -92,9 +96,9 @@ def main():
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
-            
+
             file_chunks = chunk_text(content, CHUNK_SIZE, OVERLAP)
-            
+
             for i, chunk in enumerate(file_chunks):
                 all_chunks.append(chunk)
                 all_metadatas.append({
@@ -115,27 +119,35 @@ def main():
     # 2. Generate embeddings
     # fastembed.embed returns a generator
     embeddings_generator = model.embed(all_chunks)
-    
-    # 3. Construct payload
+
+    # 3. Construct SOA payload
     for i, embedding in enumerate(embeddings_generator):
         doc_id = str(uuid.uuid4())
-        
-        doc_obj = {
-            "id": doc_id,
-            "content": all_chunks[i],
-            "embedding": embedding.tolist(), # Convert numpy array to list
-            "metadata": all_metadatas[i]
-        }
-        documents_payload.append(doc_obj)
 
-    output = {"documents": documents_payload}
-    
-    # 4. Save to JSON
+        # Append to parallel arrays (SOA format)
+        ids.append(doc_id)
+        contents.append(all_chunks[i])
+        embeddings.append(embedding.tolist())  # Convert numpy array to list
+        metadatas.append(all_metadatas[i])
+
+    # 4. Create SOA output structure (ChromaDB-compatible)
+    output = {
+        "ids": ids,
+        "documents": contents,  # Note: field name is "documents" not "contents"
+        "embeddings": embeddings,
+        "metadatas": metadatas
+    }
+
+    # 5. Save to JSON
     try:
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2)
-        print(f"Success! Wrote {len(documents_payload)} documents to {OUTPUT_FILE}")
-        print(f"Embedding dimension: {len(documents_payload[0]['embedding'])}")
+        print(f"Success! Generated SOA format with {len(ids)} documents")
+        print(f"  - IDs: {len(ids)} strings")
+        print(f"  - Documents: {len(contents)} text chunks")
+        print(f"  - Embeddings: {len(embeddings)} vectors of dimension {len(embeddings[0])}")
+        print(f"  - Metadatas: {len(metadatas)} objects")
+        print(f"Output saved to: {OUTPUT_FILE}")
     except Exception as e:
         print(f"Error writing output file: {e}")
 

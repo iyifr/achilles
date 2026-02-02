@@ -244,6 +244,181 @@ func TestInsertDocuments(t *testing.T) {
 	}
 }
 
+func TestInsertDocumentsSOA(t *testing.T) {
+	wtService, dbSvc := setupTestDB(t, "InsertDocumentsSOA")
+	collName := "test_soa"
+	dbName := "default"
+
+	err := dbSvc.CreateDB()
+	if err != nil {
+		t.Fatalf("Failed to create DB: %s", err)
+	}
+
+	err = dbSvc.CreateCollection(collName)
+	if err != nil {
+		t.Fatalf("Failed to create collection: %s", err)
+	}
+
+	// Generate test data in SOA format
+	numDocs := 100
+	embeddingDim := 1536
+
+	soa := &GlowstickDocumentSOA{
+		Ids:        make([]string, numDocs),
+		Contents:   make([]string, numDocs),
+		Embeddings: make([]float32, numDocs*embeddingDim),
+		Metadatas:  make([]map[string]interface{}, numDocs),
+	}
+
+	for i := 0; i < numDocs; i++ {
+		soa.Ids[i] = primitive.NewObjectID().Hex()
+		soa.Contents[i] = fmt.Sprintf("SOA test document %d", i+1)
+		soa.Metadatas[i] = map[string]interface{}{"type": "soa_test", "index": i + 1}
+
+		// Generate and copy embeddings
+		embedding := genEmbeddings(embeddingDim)
+		copy(soa.Embeddings[i*embeddingDim:(i+1)*embeddingDim], embedding)
+	}
+
+	start := time.Now()
+	err = dbSvc.InsertDocumentsSOA(collName, soa)
+	duration := time.Since(start)
+	t.Logf("InsertDocumentsSOA took: %v", duration)
+
+	if err != nil {
+		t.Fatalf("InsertDocumentsSOA returned error: %v", err)
+	}
+
+	// Verify documents were inserted correctly
+	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
+	val, exists, err := wtService.GetBinary(CATALOG, []byte(collectionDefKey))
+	if err != nil {
+		t.Fatalf("failed to get collection catalog: %v", err)
+	}
+	if !exists {
+		t.Fatalf("catalog entry does not exist")
+	}
+
+	var catalogEntry CollectionCatalogEntry
+	if err := bson.Unmarshal(val, &catalogEntry); err != nil {
+		t.Fatalf("failed to unmarshal catalog entry: %v", err)
+	}
+
+	if catalogEntry.VectorIndexUri != "" {
+		t.Cleanup(func() {
+			os.Remove(catalogEntry.VectorIndexUri)
+		})
+	}
+
+	// Verify each document
+	collTableURI := catalogEntry.TableUri
+	for i := 0; i < numDocs; i++ {
+		docKey := soa.Ids[i]
+		record, found, err := wtService.GetBinary(collTableURI, []byte(docKey))
+		if err != nil {
+			t.Errorf("Index %d: failed to read doc _id=%s: %v", i, docKey, err)
+		}
+		if !found {
+			t.Errorf("Index %d: inserted doc _id=%s not found", i, docKey)
+		}
+
+		var restoredDoc GlowstickDocument
+		if err := bson.Unmarshal(record, &restoredDoc); err != nil {
+			t.Errorf("unmarshal failed for _id=%s: %v", docKey, err)
+		}
+		if soa.Contents[i] != restoredDoc.Content {
+			t.Errorf("Content mismatch. Got:%s, Want:%s", restoredDoc.Content, soa.Contents[i])
+		}
+	}
+
+	// Verify stats
+	statsVal, statsExists, statsErr := wtService.GetBinary(STATS, []byte(collectionDefKey))
+	if statsErr != nil || !statsExists {
+		t.Errorf("Failed to retrieve _stats entry")
+	} else {
+		var hotStats CollectionStats
+		if err := bson.Unmarshal(statsVal, &hotStats); err != nil {
+			t.Errorf("Unmarshal failed for hot stats: %v", err)
+		}
+		if hotStats.Doc_Count != numDocs {
+			t.Errorf("Stats doc count mismatch. Got:%d, Want:%d", hotStats.Doc_Count, numDocs)
+		}
+	}
+}
+
+func TestInsertDocumentsSOA_ValidationErrors(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "SOA_Validation")
+	collName := "test_validation"
+
+	err := dbSvc.CreateDB()
+	if err != nil {
+		t.Fatalf("Failed to create DB: %s", err)
+	}
+
+	err = dbSvc.CreateCollection(collName)
+	if err != nil {
+		t.Fatalf("Failed to create collection: %s", err)
+	}
+
+	testCases := []struct {
+		name      string
+		soa       *GlowstickDocumentSOA
+		expectErr string
+	}{
+		{
+			name: "empty_ids",
+			soa: &GlowstickDocumentSOA{
+				Ids:        []string{},
+				Contents:   []string{},
+				Embeddings: []float32{},
+				Metadatas:  []map[string]interface{}{},
+			},
+			expectErr: "ids array cannot be empty",
+		},
+		{
+			name: "length_mismatch_contents",
+			soa: &GlowstickDocumentSOA{
+				Ids:        []string{"id1", "id2"},
+				Contents:   []string{"content1"},
+				Embeddings: make([]float32, 2*128),
+				Metadatas:  []map[string]interface{}{{}, {}},
+			},
+			expectErr: "length mismatch",
+		},
+		{
+			name: "wrong_embedding_length",
+			soa: &GlowstickDocumentSOA{
+				Ids:        []string{"id1", "id2"},
+				Contents:   []string{"content1", "content2"},
+				Embeddings: make([]float32, 2*128+1), // Wrong size
+				Metadatas:  []map[string]interface{}{{}, {}},
+			},
+			expectErr: "embeddings length",
+		},
+		{
+			name: "empty_embeddings",
+			soa: &GlowstickDocumentSOA{
+				Ids:        []string{"id1"},
+				Contents:   []string{"content1"},
+				Embeddings: []float32{},
+				Metadatas:  []map[string]interface{}{{}},
+			},
+			expectErr: "embeddings array cannot be empty",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := dbSvc.InsertDocumentsSOA(collName, tc.soa)
+			if err == nil {
+				t.Errorf("expected error containing %q, got nil", tc.expectErr)
+			} else if !strings.Contains(err.Error(), tc.expectErr) {
+				t.Errorf("expected error containing %q, got: %v", tc.expectErr, err)
+			}
+		})
+	}
+}
+
 func TestBasicVectorQuery(t *testing.T) {
 	_, dbSvc := setupTestDB(t, "BasicVectorQuery")
 	collName := "tenant_id_1"
