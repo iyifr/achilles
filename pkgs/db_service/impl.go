@@ -12,6 +12,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.uber.org/zap"
 )
 
 type DbCatalogEntry struct {
@@ -47,9 +48,15 @@ type CollectionStats struct {
 type GDBService struct {
 	Name      string
 	KvService wt.WTService
+	Logger    *zap.SugaredLogger
 }
 
 func (s *GDBService) CreateDB() error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("create_db_start", "db_name", s.Name)
+	}
+
 	if s.Name == "" {
 		return InvalidInput_Err(ErrEmptyName)
 	}
@@ -62,6 +69,9 @@ func (s *GDBService) CreateDB() error {
 
 	doc, err := bson.Marshal(catalogEntry)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_db_marshal_error", "db_name", s.Name, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to marshal catalog entry"))
 	}
 
@@ -69,22 +79,40 @@ func (s *GDBService) CreateDB() error {
 	_, exists, _ := s.KvService.GetBinaryWithStringKey(CATALOG, dbKey)
 
 	if exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("db_already_exists", "db_name", s.Name)
+		}
 		return AlreadyExists_Err(ErrDatabaseExists)
 	}
 
 	err = s.KvService.PutBinaryWithStringKey(CATALOG, dbKey, doc)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_db_storage_error", "db_name", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to write db catalog entry"))
 	}
 
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("create_db_complete", "db_name", s.Name, "duration_ms", duration.Milliseconds())
+	}
 	return nil
 }
 func (s *GDBService) ListDatabases() (ListDatabasesResponse, error) {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("list_databases_start")
+	}
+
 	startKey := []byte("db:")
 	endKey := []byte("db;") // Using semicolon as it comes after colon in ASCII
 
 	cursor, err := s.KvService.ScanRangeBinary(CATALOG, startKey, endKey)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("list_databases_scan_error", "error", err)
+		}
 		return ListDatabasesResponse{}, Storage_Err(Wrap_Err(err, "failed to scan catalog for databases"))
 	}
 	defer cursor.Close()
@@ -94,11 +122,17 @@ func (s *GDBService) ListDatabases() (ListDatabasesResponse, error) {
 	for cursor.Next() {
 		_, value, err := cursor.Current()
 		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("list_databases_cursor_current_error", "error", err)
+			}
 			return ListDatabasesResponse{}, Storage_Err(Wrap_Err(err, "failed to get current database"))
 		}
 
 		var dbEntry DbCatalogEntry
 		if err := bson.Unmarshal(value, &dbEntry); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("list_databases_unmarshal_error", "error", err)
+			}
 			return ListDatabasesResponse{}, Serialization_Err(Wrap_Err(err, "failed to unmarshal database catalog entry"))
 		}
 
@@ -123,7 +157,15 @@ func (s *GDBService) ListDatabases() (ListDatabasesResponse, error) {
 	}
 
 	if err := cursor.Err(); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("list_databases_cursor_error", "error", err)
+		}
 		return ListDatabasesResponse{}, Storage_Err(Wrap_Err(err, "cursor error during iteration"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("list_databases_complete", "database_count", len(databases), "duration_ms", duration.Milliseconds())
 	}
 
 	return ListDatabasesResponse{
@@ -132,6 +174,11 @@ func (s *GDBService) ListDatabases() (ListDatabasesResponse, error) {
 }
 
 func (s *GDBService) DeleteDB(name string) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("delete_db_start", "db_name", name)
+	}
+
 	if name == "" {
 		return InvalidInput_Err(ErrEmptyName)
 	}
@@ -142,9 +189,15 @@ func (s *GDBService) DeleteDB(name string) error {
 	dbKey := fmt.Sprintf("db:%s", name)
 	_, exists, err := kv.GetBinaryWithStringKey(CATALOG, dbKey)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_db_check_error", "db_name", name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to check if database exists"))
 	}
 	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("delete_db_not_found", "db_name", name)
+		}
 		return NotFound_Err(ErrDatabaseNotFound)
 	}
 
@@ -154,6 +207,9 @@ func (s *GDBService) DeleteDB(name string) error {
 
 	cursor, err := kv.ScanRangeBinary(CATALOG, startKey, endKey)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_db_scan_error", "db_name", name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to scan catalog for collections"))
 	}
 
@@ -162,11 +218,17 @@ func (s *GDBService) DeleteDB(name string) error {
 		_, value, err := cursor.Current()
 		if err != nil {
 			cursor.Close()
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_db_cursor_current_error", "db_name", name, "error", err)
+			}
 			return Storage_Err(Wrap_Err(err, "failed to get current collection"))
 		}
 		var collection CollectionCatalogEntry
 		if err := bson.Unmarshal(value, &collection); err != nil {
 			cursor.Close()
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_db_unmarshal_error", "db_name", name, "error", err)
+			}
 			return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 		}
 		collectionsToDelete = append(collectionsToDelete, collection)
@@ -178,6 +240,9 @@ func (s *GDBService) DeleteDB(name string) error {
 		// Drop the collection's WiredTiger table
 		if err := kv.DeleteTable(collection.TableUri); err != nil {
 			if !IsNotFoundError(err) && !IsBusyError(err) {
+				if s.Logger != nil {
+					s.Logger.Errorw("delete_db_drop_table_error", "db_name", name, "table_uri", collection.TableUri, "error", err)
+				}
 				return Storage_Err(Wrap_Err(err, "failed to drop collection table %s", collection.TableUri))
 			}
 		}
@@ -188,24 +253,43 @@ func (s *GDBService) DeleteDB(name string) error {
 		}
 
 		if err := kv.DeleteBinary(CATALOG, []byte(collection.Ns)); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_db_delete_catalog_error", "db_name", name, "ns", collection.Ns, "error", err)
+			}
 			return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
 		}
 
 		// Delete stats entry
 		if err := kv.DeleteBinary(STATS, []byte(collection.Ns)); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_db_delete_stats_error", "db_name", name, "ns", collection.Ns, "error", err)
+			}
 			return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
 		}
 	}
 
 	// Delete the database entry from catalog
 	if err := kv.DeleteBinaryWithStringKey(CATALOG, dbKey); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_db_delete_entry_error", "db_name", name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to delete database catalog entry"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("delete_db_complete", "db_name", name, "collections_deleted", len(collectionsToDelete), "duration_ms", duration.Milliseconds())
 	}
 
 	return nil
 }
 
 func (s *GDBService) CreateCollection(collection_name string) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("create_collection_start", "collection", collection_name, "database", s.Name)
+	}
+
 	if len(collection_name) == 0 {
 		return InvalidInput_Err(ErrEmptyName)
 	}
@@ -225,25 +309,40 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 
 	exists, err := s.KvService.TableExists(collectionTableUri)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_collection_check_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to check if table exists %s", collectionTableUri))
 	}
 
 	if exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("create_collection_already_exists", "collection", collection_name, "database", s.Name)
+		}
 		return AlreadyExists_Err(ErrCollectionExists)
 	}
 
 	err = s.KvService.CreateTable(collectionTableUri, "key_format=u,value_format=u")
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_collection_table_error", "collection", collection_name, "database", s.Name, "table_uri", collectionTableUri, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to create table %s", collectionTableUri))
 	}
 
 	doc, err := bson.Marshal(catalogEntry)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_collection_marshal_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to encode catalog entry"))
 	}
 
 	err = s.KvService.PutBinaryWithStringKey(CATALOG, collectionKey, doc)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_collection_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to write catalog entry"))
 	}
 
@@ -254,18 +353,34 @@ func (s *GDBService) CreateCollection(collection_name string) error {
 
 	stats_doc, err := bson.Marshal(statsEntry)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_collection_stats_marshal_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to encode stats entry"))
 	}
 
 	err = s.KvService.PutBinaryWithStringKey(STATS, collectionKey, stats_doc)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("create_collection_stats_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to write stats entry"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("create_collection_complete", "collection", collection_name, "database", s.Name, "duration_ms", duration.Milliseconds())
 	}
 
 	return nil
 }
 
 func (s *GDBService) DeleteCollection(collection_name string) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("delete_collection_start", "collection", collection_name, "database", s.Name)
+	}
+
 	if len(collection_name) == 0 {
 		return InvalidInput_Err(ErrEmptyName)
 	}
@@ -276,14 +391,23 @@ func (s *GDBService) DeleteCollection(collection_name string) error {
 	// Get collection info
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_collection_get_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("delete_collection_not_found", "collection", collection_name, "database", s.Name)
+		}
 		return NotFound_Err(ErrCollectionNotFound)
 	}
 
 	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_collection_unmarshal_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
@@ -294,16 +418,29 @@ func (s *GDBService) DeleteCollection(collection_name string) error {
 
 	// Delete collection from catalog
 	if err := kv.DeleteBinary(CATALOG, []byte(collectionDefKey)); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_collection_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to delete collection catalog entry"))
 	}
 
 	// Delete stats entry
 	kv.DeleteBinary(STATS, []byte(collectionDefKey))
 
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("delete_collection_complete", "collection", collection_name, "database", s.Name, "duration_ms", duration.Milliseconds())
+	}
+
 	return nil
 }
 
 func (s *GDBService) ListCollections() ([]CollectionCatalogEntry, error) {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("list_collections_start", "database", s.Name)
+	}
+
 	if s.Name == "" {
 		return nil, InvalidInput_Err(ErrEmptyName)
 	}
@@ -313,6 +450,9 @@ func (s *GDBService) ListCollections() ([]CollectionCatalogEntry, error) {
 
 	cursor, err := s.KvService.ScanRangeBinary(CATALOG, startKey, endKey)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("list_collections_scan_error", "database", s.Name, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "failed to scan catalog"))
 	}
 	defer cursor.Close()
@@ -321,23 +461,42 @@ func (s *GDBService) ListCollections() ([]CollectionCatalogEntry, error) {
 	for cursor.Next() {
 		_, value, err := cursor.Current()
 		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("list_collections_cursor_current_error", "database", s.Name, "error", err)
+			}
 			return nil, Storage_Err(Wrap_Err(err, "failed to get current"))
 		}
 		collectionValue := CollectionCatalogEntry{}
 		if err := bson.Unmarshal(value, &collectionValue); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("list_collections_unmarshal_error", "database", s.Name, "error", err)
+			}
 			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 		}
 		collections = append(collections, collectionValue)
 	}
 
 	if err := cursor.Err(); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("list_collections_cursor_error", "database", s.Name, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "cursor error during iteration"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("list_collections_complete", "database", s.Name, "collection_count", len(collections), "duration_ms", duration.Milliseconds())
 	}
 
 	return collections, nil
 }
 
 func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, error) {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("get_collection_start", "collection", collection_name, "database", s.Name)
+	}
+
 	if s.Name == "" {
 		return CollectionEntry{}, InvalidInput_Err(ErrEmptyName)
 	}
@@ -346,15 +505,24 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 	val, exists, err := s.KvService.GetBinary(CATALOG, []byte(collectionDefKey))
 
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("get_collection_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return CollectionEntry{}, Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 
 	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("get_collection_not_found", "collection", collection_name, "database", s.Name)
+		}
 		return CollectionEntry{}, NotFound_Err(ErrCollectionNotFound)
 	}
 
 	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("get_collection_unmarshal_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return CollectionEntry{}, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
@@ -362,6 +530,9 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 	var stats CollectionStats
 	if statsErr == nil && statsExists {
 		if err := bson.Unmarshal(statsVal, &stats); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("get_collection_unmarshal_stats_error", "collection", collection_name, "database", s.Name, "error", err)
+			}
 			return CollectionEntry{}, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection stats"))
 		}
 	}
@@ -369,6 +540,11 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 	documents := make([]GlowstickDocument, 0)
 
 	stats.Vector_Index_Size = float64(stats.Vector_Index_Size)
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("get_collection_complete", "collection", collection_name, "database", s.Name, "duration_ms", duration.Milliseconds())
+	}
 
 	return CollectionEntry{
 		Info:      collection,
@@ -378,6 +554,11 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 }
 
 func (s *GDBService) InsertDocuments(collection_name string, documents []GlowstickDocument) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("insert_documents_start", "collection", collection_name, "doc_count", len(documents))
+	}
+
 	if len(documents) == 0 {
 		return InvalidInput_Err(ErrEmptyDocuments)
 	}
@@ -532,10 +713,19 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return Storage_Err(Wrap_Err(err, "failed to write hot stats"))
 	}
 
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("insert_documents_complete", "collection", collection_name, "doc_count", len(documents), "duration_ms", duration.Milliseconds())
+	}
 	return nil
 }
 
 func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error) {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("query_collection_start", "collection", collection_name, "top_k", query.TopK)
+	}
+
 	kv := s.KvService
 	vectr_svc := faiss.FAISS()
 
@@ -710,25 +900,47 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		}
 	}
 
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("query_collection_complete", "collection", collection_name, "results", len(docs), "duration_ms", duration.Milliseconds())
+	}
 	return docs, nil
 }
+
 func (s *GDBService) GetDocuments(collection_name string) ([]GlowstickDocument, error) {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("get_documents_start", "collection", collection_name, "database", s.Name)
+	}
+
 	kv := s.KvService
 	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("get_documents_catalog_error", "collection", collection_name, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("get_documents_collection_not_found", "collection", collection_name)
+		}
 		return nil, NotFound_Err(ErrCollectionNotFound)
 	}
 	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("get_documents_unmarshal_catalog_error", "collection", collection_name, "error", err)
+		}
 		return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
 	cursor, err := kv.ScanRangeBinary(collection.TableUri, []byte(""), []byte("~"))
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("get_documents_scan_error", "collection", collection_name, "table_uri", collection.TableUri, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "failed to scan collection table"))
 	}
 	defer cursor.Close()
@@ -737,36 +949,64 @@ func (s *GDBService) GetDocuments(collection_name string) ([]GlowstickDocument, 
 	for cursor.Next() {
 		_, value, err := cursor.Current()
 		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("get_documents_cursor_current_error", "collection", collection_name, "error", err)
+			}
 			return nil, Storage_Err(Wrap_Err(err, "failed to get current document"))
 		}
 
 		var doc GlowstickDocument
 		if err := bson.Unmarshal(value, &doc); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("get_documents_unmarshal_doc_error", "collection", collection_name, "error", err)
+			}
 			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal document"))
 		}
 		docs = append(docs, doc)
 	}
 
 	if err := cursor.Err(); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("get_documents_cursor_error", "collection", collection_name, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "cursor error during iteration"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("get_documents_complete", "collection", collection_name, "document_count", len(docs), "duration_ms", duration.Milliseconds())
 	}
 
 	return docs, nil
 }
 
 func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdatePayload) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("update_documents_start", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId)
+	}
+
 	kv := s.KvService
 	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
 
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("update_documents_collection_not_found", "collection", collection_name, "database", s.Name)
+		}
 		return NotFound_Err(ErrCollectionNotFound)
 	}
 	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_unmarshal_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
@@ -777,15 +1017,24 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 	doc_raw, doc_exists, doc_get_err := kv.GetBinaryWithStringKey(collection.TableUri, payload.DocumentId)
 
 	if !doc_exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("update_documents_document_not_found", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId)
+		}
 		return NotFound_Err(ErrDocumentNotFound)
 	}
 
 	if doc_get_err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_get_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", doc_get_err)
+		}
 		return Storage_Err(Wrap_Err(doc_get_err, "failed to get document"))
 	}
 
 	var doc GlowstickDocument
 	if err := bson.Unmarshal(doc_raw, &doc); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_unmarshal_doc_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal document"))
 	}
 	for key, value := range payload.Updates {
@@ -796,17 +1045,33 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 	}
 	updated_val, err := bson.Marshal(doc)
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_marshal_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to marshal updated document"))
 	}
 
 	if err := kv.PutBinaryWithStringKey(collection.TableUri, payload.DocumentId, updated_val); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_put_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to update document"))
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("update_documents_complete", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "duration_ms", duration.Milliseconds())
 	}
 
 	return nil
 }
 
 func (s *GDBService) DeleteDocuments(collection_name string, documentIds []string) error {
+	start := time.Now()
+	if s.Logger != nil {
+		s.Logger.Infow("delete_documents_start", "collection", collection_name, "database", s.Name, "doc_count", len(documentIds))
+	}
+
 	if len(documentIds) == 0 {
 		return InvalidInput_Err(ErrEmptyDocuments)
 	}
@@ -817,14 +1082,23 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 	// Get collection info
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_documents_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("delete_documents_collection_not_found", "collection", collection_name, "database", s.Name)
+		}
 		return NotFound_Err(ErrCollectionNotFound)
 	}
 
 	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("delete_documents_unmarshal_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
+		}
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
@@ -835,6 +1109,9 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 		_, docExists, _ := kv.GetBinaryWithStringKey(collection.TableUri, docId)
 		if docExists {
 			if err := kv.DeleteBinaryWithStringKey(collection.TableUri, docId); err != nil {
+				if s.Logger != nil {
+					s.Logger.Errorw("delete_documents_delete_error", "collection", collection_name, "database", s.Name, "document_id", docId, "error", err)
+				}
 				return Storage_Err(Wrap_Err(err, "failed to delete document %s", docId))
 			}
 			deletedCount++
@@ -845,11 +1122,17 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 	if deletedCount > 0 {
 		statsVal, statsExists, err := kv.GetBinary(STATS, []byte(collectionDefKey))
 		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_documents_stats_get_error", "collection", collection_name, "database", s.Name, "error", err)
+			}
 			return Storage_Err(Wrap_Err(err, "failed to get stats"))
 		}
 		if statsExists {
 			var stats CollectionStats
 			if err := bson.Unmarshal(statsVal, &stats); err != nil {
+				if s.Logger != nil {
+					s.Logger.Errorw("delete_documents_stats_unmarshal_error", "collection", collection_name, "database", s.Name, "error", err)
+				}
 				return Serialization_Err(Wrap_Err(err, "failed to unmarshal stats"))
 			}
 
@@ -860,13 +1143,24 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 
 			updatedStats, err := bson.Marshal(stats)
 			if err != nil {
+				if s.Logger != nil {
+					s.Logger.Errorw("delete_documents_stats_marshal_error", "collection", collection_name, "database", s.Name, "error", err)
+				}
 				return Serialization_Err(Wrap_Err(err, "failed to marshal updated stats"))
 			}
 
 			if err := kv.PutBinary(STATS, []byte(collectionDefKey), updatedStats); err != nil {
+				if s.Logger != nil {
+					s.Logger.Errorw("delete_documents_stats_put_error", "collection", collection_name, "database", s.Name, "error", err)
+				}
 				return Storage_Err(Wrap_Err(err, "failed to update stats"))
 			}
 		}
+	}
+
+	if s.Logger != nil {
+		duration := time.Since(start)
+		s.Logger.Infow("delete_documents_complete", "collection", collection_name, "database", s.Name, "deleted_count", deletedCount, "duration_ms", duration.Milliseconds())
 	}
 
 	return nil
