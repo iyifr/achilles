@@ -8,6 +8,7 @@ import (
 )
 
 func CreateCollection(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	var db_name = ctx.UserValue("database_name").(string)
 
 	var requestBody struct {
@@ -21,9 +22,12 @@ func CreateCollection(ctx *fasthttp.RequestCtx) {
 	}
 
 	collection_name := requestBody.Name
+	log.Infow("creating_collection", "db_name", db_name, "collection_name", collection_name)
+
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      db_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 	err := db.CreateCollection(collection_name)
 
@@ -32,6 +36,7 @@ func CreateCollection(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	log.Infow("collection_created", "db_name", db_name, "collection_name", collection_name)
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.Write([]byte(`{"message":"Collection created successfully"}`))

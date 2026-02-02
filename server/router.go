@@ -2,11 +2,13 @@ package server
 
 import (
 	dbservice "achillesdb/pkgs/db_service"
+	logger "achillesdb/pkgs/logger"
 	"encoding/json"
 	"fmt"
 
 	"github.com/fasthttp/router"
 	"github.com/valyala/fasthttp"
+	"go.uber.org/zap"
 )
 
 type GlowstickDocumentPayload struct {
@@ -21,19 +23,30 @@ type QueryResponse struct {
 	DocCount  int                           `json:"doc_count"`
 }
 
+// getLogger extracts logger from request context or returns global logger
+func getLogger(ctx *fasthttp.RequestCtx) *zap.SugaredLogger {
+	if logVal := ctx.UserValue("logger"); logVal != nil {
+		return logVal.(*zap.SugaredLogger)
+	}
+	return logger.GetSugaredLogger()
+}
+
 // handleError handles database errors and sets appropriate HTTP responses
 func handleError(ctx *fasthttp.RequestCtx, err error) {
+	log := getLogger(ctx)
 	var dbErr *dbservice.DBError
 	if errors, ok := err.(*dbservice.DBError); ok {
 		dbErr = errors
 	} else {
 		// If not a DBError, treat as internal error
+		log.Errorw("untyped_error", "error", err)
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.SetContentType("application/json")
 		ctx.Write([]byte(fmt.Sprintf(`{"error":"%s"}`, err.Error())))
 		return
 	}
 
+	log.Errorw("db_error", "error_code", dbErr.Code, "error", dbErr.Error(), "http_status", dbErr.HTTPStatus())
 	ctx.SetStatusCode(dbErr.HTTPStatus())
 	ctx.SetContentType("application/json")
 	ctx.Write([]byte(fmt.Sprintf(`{"error":"%s"}`, dbErr.Error())))
@@ -43,26 +56,28 @@ func Router() *router.Router {
 	r := router.New()
 
 	// OpenAPI documentation routes
-	r.GET("/docs", SwaggerUIHandler)
-	r.GET("/api/v1/openapi.yaml", OpenAPISpecHandler)
+	r.GET("/docs", LoggingMiddleware(SwaggerUIHandler))
+	r.GET("/api/v1/openapi.yaml", LoggingMiddleware(OpenAPISpecHandler))
 
 	apiV1 := r.Group("/api/v1")
-	apiV1.POST("/database", CreateDB)
-	apiV1.GET("/databases", ListDatabasesHandler)
-	apiV1.DELETE("/database/{database_name}", DeleteDBHandler)
-	apiV1.POST("/database/{database_name}/collections", CreateCollection)
-	apiV1.GET("/database/{database_name}/collections", ListCollections)
-	apiV1.DELETE("/database/{database_name}/collections/{collection_name}", DeleteCollectionHandler)
-	apiV1.GET("/database/{database_name}/collections/{collection_name}", GetCollection)
-	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents", InsertDocumentsHndlr)
-	apiV1.GET("/database/{database_name}/collections/{collection_name}/documents", GetDocumentsHandler)
-	apiV1.DELETE("/database/{database_name}/collections/{collection_name}/documents", DeleteDocumentsHandler)
-	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents/query", QueryDocumentsHandler)
-	apiV1.PUT("/database/{database_name}/collections/{collection_name}/documents", UpdateDocumentsHandler)
+	apiV1.POST("/database", LoggingMiddleware(CreateDB))
+	apiV1.GET("/databases", LoggingMiddleware(ListDatabasesHandler))
+	apiV1.DELETE("/database/{database_name}", LoggingMiddleware(DeleteDBHandler))
+	apiV1.POST("/database/{database_name}/collections", LoggingMiddleware(CreateCollection))
+	apiV1.GET("/database/{database_name}/collections", LoggingMiddleware(ListCollections))
+	apiV1.DELETE("/database/{database_name}/collections/{collection_name}", LoggingMiddleware(DeleteCollectionHandler))
+	apiV1.GET("/database/{database_name}/collections/{collection_name}", LoggingMiddleware(GetCollection))
+	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(InsertDocumentsHndlr))
+	apiV1.GET("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(GetDocumentsHandler))
+	apiV1.DELETE("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(DeleteDocumentsHandler))
+	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents/query", LoggingMiddleware(QueryDocumentsHandler))
+	apiV1.PUT("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(UpdateDocumentsHandler))
 	return r
 }
 
 func CreateDB(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
+
 	var requestBody struct {
 		Db_name string `json:"name"`
 	}
@@ -84,6 +99,7 @@ func CreateDB(ctx *fasthttp.RequestCtx) {
 	params := dbservice.DbParams{
 		Name:      dbName,
 		KvService: wtService,
+		Logger:    log,
 	}
 
 	dbSvc := dbservice.DatabaseService(params)
@@ -100,9 +116,12 @@ func CreateDB(ctx *fasthttp.RequestCtx) {
 }
 
 func ListDatabasesHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
+
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      "",
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	result, err := db.ListDatabases()
@@ -136,10 +155,13 @@ func ListDatabasesHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func ListCollections(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
+
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 	collections, err := db.ListCollections()
 	if err != nil {
@@ -167,11 +189,14 @@ func ListCollections(ctx *fasthttp.RequestCtx) {
 }
 
 func GetCollection(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
+
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 	collection, err := db.GetCollection(collection_name)
 	if err != nil {
@@ -190,6 +215,7 @@ func GetCollection(ctx *fasthttp.RequestCtx) {
 }
 
 func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
 
@@ -216,6 +242,7 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	err := db.InsertDocuments(collection_name, documents)
@@ -228,12 +255,14 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 	ctx.Write([]byte(`{"message":"Documents inserted into collection successfully"}`))
 }
 func GetDocumentsHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	var database = ctx.UserValue("database_name").(string)
 	var collection = ctx.UserValue("collection_name").(string)
 
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database,
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	docs, err := db.GetDocuments(collection)
@@ -260,9 +289,11 @@ func GetDocumentsHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func QueryDocumentsHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	var database = ctx.UserValue("database_name").(string)
 	var collection = ctx.UserValue("collection_name").(string)
-	var requestBody struct {
+
+	var requestBody struct{
 		TopK           int            `json:"top_k"`
 		QueryEmbedding []float32      `json:"query_embedding"`
 		Filters        map[string]any `json:"where"`
@@ -277,7 +308,9 @@ func QueryDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database,
 		KvService: wtService,
+		Logger:    log,
 	})
+
 	var data = dbservice.QueryStruct{
 		TopK:           int32(requestBody.TopK),
 		QueryEmbedding: requestBody.QueryEmbedding,
@@ -308,6 +341,7 @@ func QueryDocumentsHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
 
@@ -332,6 +366,7 @@ func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	payload := &dbservice.DocUpdatePayload{
@@ -352,11 +387,13 @@ func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func DeleteDBHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
 
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	err := db.DeleteDB(database_name)
@@ -371,12 +408,14 @@ func DeleteDBHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func DeleteCollectionHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
 
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	err := db.DeleteCollection(collection_name)
@@ -391,6 +430,7 @@ func DeleteCollectionHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func DeleteDocumentsHandler(ctx *fasthttp.RequestCtx) {
+	log := getLogger(ctx)
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
 
@@ -407,6 +447,7 @@ func DeleteDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
+		Logger:    log,
 	})
 
 	err := db.DeleteDocuments(collection_name, requestBody.DocumentIds)

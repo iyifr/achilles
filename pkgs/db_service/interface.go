@@ -3,6 +3,8 @@ package dbservice
 import (
 	wt "achillesdb/pkgs/wiredtiger"
 	"os"
+
+	"go.uber.org/zap"
 )
 
 // TABLE URIS for creating wiredtiger tables
@@ -72,11 +74,13 @@ type DbParams struct {
 	Name        string
 	PutIfAbsent bool
 	KvService   wt.WTService
+	Logger      *zap.SugaredLogger
 }
 
 func DatabaseService(params DbParams) DBService {
 	return &GDBService{
 		Name:      params.Name,
 		KvService: params.KvService,
+		Logger:    params.Logger,
 	}
 }
