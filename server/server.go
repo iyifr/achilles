@@ -31,60 +31,6 @@ var (
 	VECTORS_DIR    = getEnvOrDefault("VECTORS_HOME", "volumes/vectors")
 )
 
-// getOptimalCacheSizeMB returns optimal WiredTiger cache size in MB
-// Can be overridden with WT_CACHE_SIZE env var (in MB)
-func getOptimalCacheSizeMB() int {
-	if envCache := os.Getenv("WT_CACHE_SIZE"); envCache != "" {
-		if size, err := strconv.Atoi(envCache); err == nil && size > 0 {
-			return size
-		}
-	}
-
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	systemRAM := m.Sys / (1024 * 1024)
-	optimalCache := int(float64(systemRAM) * 0.10)
-
-	if optimalCache < 64 {
-		optimalCache = 64
-	}
-	if optimalCache > 1024 {
-		optimalCache = 1024
-	}
-
-	return optimalCache
-}
-
-// ensureDirectory creates a directory if it doesn't exist
-func ensureDirectory(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return os.MkdirAll(path, 0755)
-	}
-	return nil
-}
-
-// initializeDirectories creates required directories in parallel
-func initializeDirectories() error {
-	errChan := make(chan error, 2)
-
-	go func() {
-		errChan <- ensureDirectory(WIREDTIGER_DIR)
-	}()
-
-	go func() {
-		errChan <- ensureDirectory(VECTORS_DIR)
-	}()
-
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // initializeLogger sets up the application logger
 func initializeLogger() (*zap.Logger, *zap.SugaredLogger) {
 	log, sugaredLog := logger.InitLogger()
@@ -180,4 +126,55 @@ func StartServer() {
 		sugaredLog.Errorw("Server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// Can be overridden with WT_CACHE_SIZE env var (in MB)
+func getOptimalCacheSizeMB() int {
+	if envCache := os.Getenv("WT_CACHE_SIZE"); envCache != "" {
+		if size, err := strconv.Atoi(envCache); err == nil && size > 0 {
+			return size
+		}
+	}
+
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	systemRAM := m.Sys / (1024 * 1024)
+	optimalCache := int(float64(systemRAM) * 0.10)
+
+	if optimalCache < 64 {
+		optimalCache = 64
+	}
+	if optimalCache > 1024 {
+		optimalCache = 1024
+	}
+
+	return optimalCache
+}
+
+func ensureDirectory(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return os.MkdirAll(path, 0755)
+	}
+	return nil
+}
+
+func initializeDirectories() error {
+	errChan := make(chan error, 2)
+
+	go func() {
+		errChan <- ensureDirectory(WIREDTIGER_DIR)
+	}()
+
+	go func() {
+		errChan <- ensureDirectory(VECTORS_DIR)
+	}()
+
+	for i := 0; i < 2; i++ {
+		if err := <-errChan; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

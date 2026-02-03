@@ -873,7 +873,7 @@ func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *Glows
 	return nil
 }
 
-func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error) {
+func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) ([]GlowstickQueryResultSet, error) {
 	start := time.Now()
 	if s.Logger != nil {
 		s.Logger.Infow("query_collection_start", "collection", collection_name, "top_k", query.TopK)
@@ -881,102 +881,132 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 	kv := s.KvService
 	vectr_svc := faiss.FAISS()
-
-	docs := make([]GlowstickDocument, 0, query.TopK)
-
 	collectionDefKey := s.Name + "." + collection_name
 
+	// Get collection catalog
 	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
-
-	if !exists {
-		return nil, NotFound_Err(ErrCollectionNotFound)
-	}
-
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("query_collection_catalog_error", "collection", collection_name, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 
-	var collection CollectionCatalogEntry
+	if !exists {
+		if s.Logger != nil {
+			s.Logger.Warnw("query_collection_not_found", "collection", collection_name)
+		}
+		return nil, NotFound_Err(ErrCollectionNotFound)
+	}
 
+	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("query_collection_unmarshal_error", "collection", collection_name, "error", err)
+		}
 		return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
+	// Parse vector index path
 	vectorIndexUri := collection.VectorIndexUri
-
 	var vectorIndexFilePath string
 	if vectorIndexUri != "" {
 		u, err := url.Parse(vectorIndexUri)
 		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("query_collection_parse_uri_error", "collection", collection_name, "uri", vectorIndexUri, "error", err)
+			}
 			return nil, Internal_Err(Wrap_Err(err, "failed to parse vector index URI"))
 		}
 		vectorIndexFilePath = u.Path
 	}
 
+	// Load vector index
 	idx, err := vectr_svc.ReadIndex(vectorIndexFilePath)
-	defer idx.Free()
-
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("query_collection_read_index_error", "collection", collection_name, "path", vectorIndexFilePath, "error", err)
+		}
 		return nil, Storage_Err(Wrap_Err(err, "could not read vector index from file"))
 	}
+	defer idx.Free()
 
+	// Search vector index
 	distances, ids, err := idx.Search(query.QueryEmbedding, 1, int(query.TopK))
-
 	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("query_collection_search_error", "collection", collection_name, "error", err)
+		}
 		return nil, Internal_Err(Wrap_Err(err, "failed to search vector index"))
 	}
 
+	docs := make([]GlowstickQueryResultSet, 0, query.TopK)
 	if len(ids) == 0 {
 		return docs, nil
 	}
 
+	// Helper function to process a single document
+	processDoc := func(id int64, distance float32) *GlowstickQueryResultSet {
+		key := strconv.FormatInt(id, 10)
+
+		val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
+		if err != nil || !exists {
+			return nil
+		}
+
+		docIDBytes := []byte(val)
+		docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
+		if err != nil || !exists || len(docBin) == 0 {
+			return nil
+		}
+		var doc GlowstickDocument
+		if err := bson.Unmarshal(docBin, &doc); err != nil {
+			return nil
+		}
+
+		if query.MaxDistance != 0 && distance >= query.MaxDistance {
+			return nil
+		}
+
+		if query.Filters != nil {
+			matches, err := matchesFilter(doc.Metadata, query.Filters)
+			if err != nil || !matches {
+				return nil
+			}
+		}
+
+		// Convert to query result set with distance
+		result := GlowstickQueryResultSet{
+			Id:        doc.Id,
+			Content:   doc.Content,
+			Embedding: doc.Embedding,
+			Metadata:  doc.Metadata,
+			Distance:  distance,
+		}
+
+		return &result
+	}
+
+	// For small result sets, process sequentially
 	if len(ids) <= 3 {
 		for i, id := range ids {
-			distance := distances[i]
-
-			key := strconv.FormatInt(int64(id), 10)
-
-			val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-			if err != nil || !exists {
-				continue
+			if doc := processDoc(int64(id), distances[i]); doc != nil {
+				docs = append(docs, *doc)
 			}
-
-			var docIDBytes = []byte(val)
-
-			docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
-			if err != nil || !exists || len(docBin) == 0 {
-				continue
-			}
-
-			var doc GlowstickDocument
-			if err := bson.Unmarshal(docBin, &doc); err != nil {
-				continue
-			}
-
-			if query.MaxDistance != 0 && distance >= query.MaxDistance {
-				continue
-			}
-
-			if query.Filters != nil {
-				matches, err := matchesFilter(doc.Metadata, query.Filters)
-				if err != nil {
-					continue
-				}
-				if !matches {
-					continue
-				}
-			}
-
-			docs = append(docs, doc)
+		}
+		if s.Logger != nil {
+			duration := time.Since(start)
+			s.Logger.Infow("query_collection_complete", "collection", collection_name, "results", len(docs), "duration_ms", duration.Milliseconds())
 		}
 		return docs, nil
 	}
 
+	// For larger result sets, use parallel processing
 	numWorkers := min(len(ids), 10)
 	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
 
 	type docResult struct {
-		doc   GlowstickDocument
+		doc   GlowstickQueryResultSet
 		index int
 	}
 
@@ -996,43 +1026,9 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 			defer wg.Done()
 
 			for j := startIdx; j < endIdx; j++ {
-				id := ids[j]
-				distance := distances[j]
-
-				key := strconv.FormatInt(int64(id), 10)
-
-				val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-				if err != nil || !exists {
-					continue
+				if doc := processDoc(int64(ids[j]), distances[j]); doc != nil {
+					resultChan <- docResult{doc: *doc, index: j}
 				}
-
-				var docIDBytes = []byte(val)
-
-				docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
-				if err != nil || !exists || len(docBin) == 0 {
-					continue
-				}
-
-				var doc GlowstickDocument
-				if err := bson.Unmarshal(docBin, &doc); err != nil {
-					continue
-				}
-
-				if query.MaxDistance != 0 && distance >= query.MaxDistance {
-					continue
-				}
-
-				if query.Filters != nil {
-					matches, err := matchesFilter(doc.Metadata, query.Filters)
-					if err != nil {
-						continue
-					}
-					if !matches {
-						continue
-					}
-				}
-
-				resultChan <- docResult{doc: doc, index: j}
 			}
 		}(start, end)
 	}
@@ -1042,7 +1038,7 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		close(resultChan)
 	}()
 
-	results := make(map[int]GlowstickDocument)
+	results := make(map[int]GlowstickQueryResultSet)
 	for result := range resultChan {
 		results[result.index] = result.doc
 	}

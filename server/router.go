@@ -19,6 +19,10 @@ type GlowstickDocumentPayload struct {
 }
 
 type QueryResponse struct {
+	Documents []dbservice.GlowstickQueryResultSet `json:"documents"`
+	DocCount  int                                 `json:"doc_count"`
+}
+type GetDocumentsResponse struct {
 	Documents []dbservice.GlowstickDocument `json:"documents"`
 	DocCount  int                           `json:"doc_count"`
 }
@@ -318,7 +322,7 @@ func GetDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 
-	response := QueryResponse{
+	response := GetDocumentsResponse{
 		Documents: docs,
 		DocCount:  len(docs),
 	}

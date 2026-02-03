@@ -27,15 +27,22 @@ type GlowstickDocument struct {
 	Embedding []float32              `bson:"embedding" json:"-"`
 	Metadata  map[string]interface{} `bson:"metadata" json:"metadata"`
 }
+type GlowstickQueryResultSet struct {
+	Id        string                 `bson:"_id" json:"id"`
+	Content   string                 `bson:"content" json:"content"`
+	Embedding []float32              `bson:"embedding" json:"-"`
+	Metadata  map[string]interface{} `bson:"metadata" json:"metadata"`
+	Distance  float32                `bson:"distance" json:"distance"`
+}
 
 // GlowstickDocumentSOA represents documents in ChromaDB-compatible SOA (Struct of Arrays) format.
 // This format is more efficient for batch operations as embeddings are already in the flat
 // layout required by FAISS, avoiding per-document copy operations.
 type GlowstickDocumentSOA struct {
-	Ids        []string                   `json:"ids" bson:"ids"`
-	Contents   []string                   `json:"contents" bson:"contents"`
-	Embeddings []float32                  `json:"embeddings" bson:"embeddings"` // Flat array: [doc1_emb..., doc2_emb..., ...]
-	Metadatas  []map[string]interface{}   `json:"metadatas" bson:"metadatas"`
+	Ids        []string                 `json:"ids" bson:"ids"`
+	Contents   []string                 `json:"contents" bson:"contents"`
+	Embeddings []float32                `json:"embeddings" bson:"embeddings"` // Flat array: [doc1_emb..., doc2_emb..., ...]
+	Metadatas  []map[string]interface{} `json:"metadatas" bson:"metadatas"`
 }
 
 // Validate checks that all arrays have consistent lengths and embeddings dimension is valid.
@@ -126,7 +133,7 @@ type DBService interface {
 	InsertDocumentsSOA(collection_name string, documents *GlowstickDocumentSOA) error
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
 	DeleteDocuments(collection_name string, documentIds []string) error
-	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickDocument, error)
+	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickQueryResultSet, error)
 	UpdateDocuments(collection_name string, payload *DocUpdatePayload) error
 }
 
