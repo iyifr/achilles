@@ -102,6 +102,7 @@ All endpoints under `/api/v1`:
 | DELETE | `/database/{db}/collections/{col}/documents`       | Delete by IDs      |
 | POST   | `/database/{db}/collections/{col}/documents/query` | Vector search      |
 
+
 ## Testing Notes
 
 Tests create temporary WiredTiger directories and set `VECTORS_HOME` per test. Cleanup happens via `t.Cleanup()`.
