@@ -35,7 +35,7 @@ type GlowstickQueryResultSet struct {
 	Distance  float32                `bson:"distance" json:"distance"`
 }
 
-// GlowstickDocumentSOA represents documents in ChromaDB-compatible SOA (Struct of Arrays) format.
+// GlowstickDocumentSOA represents documents in ChromaDB compatible SOA (Struct of Arrays) format.
 // This format is more efficient for batch operations as embeddings are already in the flat
 // layout required by FAISS, avoiding per-document copy operations.
 type GlowstickDocumentSOA struct {

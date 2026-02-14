@@ -51,14 +51,14 @@ type BinaryKeyValuePair struct {
 // StringRangeCursor provides cursor-based range iteration for string keys
 type StringRangeCursor interface {
 	Next() bool
-	// TODO: Add Prev() for backwards iteration                            // Iterate forward
-	CurrentString() (string, string, error) // Get key, value
+	// TODO: Add Prev() for backwards iteration
+	CurrentString() (string, string, error)
 	Err() error
 	Close() error
 	Valid() bool
 }
 
-// BinaryRangeCursor provides cursor-based range iteration for binary keys
+// BinaryRangeCursor provides cursor-based range iteration for tables binary keys
 type BinaryRangeCursor interface {
 	Next() bool // Iterate forward
 	// TODO: Add Prev() method for backwards iteration
