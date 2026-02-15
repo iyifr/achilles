@@ -1,6 +1,5 @@
 # AchillesDB
-
-Vector database built with Go, WiredTiger, and FAISS.
+Hybrid Vector-document store for agent memory and AI applications.
 
 
 ## Quick Start

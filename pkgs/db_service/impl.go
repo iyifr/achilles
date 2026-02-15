@@ -4,7 +4,6 @@ import (
 	"achillesdb/pkgs/faiss"
 	wt "achillesdb/pkgs/wiredtiger"
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"sync"
@@ -588,14 +587,13 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", documents[0].Id))
 	}
 
-	// Use cached index (avoids disk read on every insert)
 	indexCache := faiss.GlobalIndexCache()
 	cachedIdx, err := indexCache.GetOrCreate(vectorIndexFilePath, len(documents[0].Embedding))
 	if err != nil {
 		return Internal_Err(Wrap_Err(err, "failed to get or create vector index"))
 	}
 
-	// Lock the index for exclusive access during this insert operation
+	// Lock the index during writes.
 	cachedIdx.Lock()
 	defer cachedIdx.Unlock()
 
@@ -633,7 +631,7 @@ func (s *GDBService) InsertDocuments(collection_name string, documents []Glowsti
 		}
 
 		doc_bytes, release, err := BsonMarshalWithPool(doc)
-		defer release()
+		release()
 
 		if err != nil {
 			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
@@ -781,7 +779,7 @@ func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *Glows
 	defer docWriter.Close()
 
 	// Insert each document into WiredTiger
-	for i := 0; i < numDocs; i++ {
+	for i := range numDocs {
 		doc := GlowstickDocument{
 			Id:        documents.Ids[i],
 			Content:   documents.Contents[i],
@@ -817,7 +815,7 @@ func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *Glows
 	}
 	defer labelWriter.Close()
 
-	for i := 0; i < numDocs; i++ {
+	for i := range numDocs {
 		label := startLabel + int64(i)
 		if err := labelWriter.PutString(fmt.Sprintf("%d", label), documents.Ids[i]); err != nil {
 			return Storage_Err(Wrap_Err(err, "failed to write label->docID mapping for label %d", label))
@@ -880,7 +878,6 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 	}
 
 	kv := s.KvService
-	vectr_svc := faiss.FAISS()
 	collectionDefKey := s.Name + "." + collection_name
 
 	// Get collection catalog
@@ -907,29 +904,21 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
-	// Parse vector index path
-	vectorIndexUri := collection.VectorIndexUri
-	var vectorIndexFilePath string
-	if vectorIndexUri != "" {
-		u, err := url.Parse(vectorIndexUri)
-		if err != nil {
-			if s.Logger != nil {
-				s.Logger.Errorw("query_collection_parse_uri_error", "collection", collection_name, "uri", vectorIndexUri, "error", err)
-			}
-			return nil, Internal_Err(Wrap_Err(err, "failed to parse vector index URI"))
-		}
-		vectorIndexFilePath = u.Path
-	}
-
-	// Load vector index
-	idx, err := vectr_svc.ReadIndex(vectorIndexFilePath)
+	// Use cached index (avoids disk read on every query)
+	vectorIndexFilePath := collection.VectorIndexUri
+	indexCache := faiss.GlobalIndexCache()
+	cachedIdx, err := indexCache.GetOrCreate(vectorIndexFilePath, len(query.QueryEmbedding))
 	if err != nil {
 		if s.Logger != nil {
-			s.Logger.Errorw("query_collection_read_index_error", "collection", collection_name, "path", vectorIndexFilePath, "error", err)
+			s.Logger.Errorw("query_collection_index_cache_error", "collection", collection_name, "error", err)
 		}
-		return nil, Storage_Err(Wrap_Err(err, "could not read vector index from file"))
+		return nil, Internal_Err(Wrap_Err(err, "failed to get vector index from cache"))
 	}
-	defer idx.Free()
+
+	cachedIdx.Lock()
+	defer cachedIdx.Unlock()
+
+	idx := cachedIdx.Index
 
 	// Search vector index
 	distances, ids, err := idx.Search(query.QueryEmbedding, 1, int(query.TopK))
@@ -945,37 +934,45 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		return docs, nil
 	}
 
-	// Helper function to process a single document
-	processDoc := func(id int64, distance float32) *GlowstickQueryResultSet {
+	// Helper function to process a single document.
+	// Returns (nil, nil) when a document is legitimately skipped (not found, filtered out).
+	// Returns (nil, err) on actual storage/deserialization failures.
+	processDoc := func(id int64, distance float32) (*GlowstickQueryResultSet, error) {
 		key := strconv.FormatInt(id, 10)
 
 		val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-		if err != nil || !exists {
-			return nil
+		if err != nil {
+			return nil, Storage_Err(Wrap_Err(err, "failed to get label mapping for label %d", id))
+		}
+		if !exists {
+			return nil, nil
 		}
 
 		docIDBytes := []byte(val)
 		docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
-		if err != nil || !exists || len(docBin) == 0 {
-			return nil
+		if err != nil {
+			return nil, Storage_Err(Wrap_Err(err, "failed to get document %s", val))
 		}
+		if !exists || len(docBin) == 0 {
+			return nil, nil
+		}
+
 		var doc GlowstickDocument
 		if err := bson.Unmarshal(docBin, &doc); err != nil {
-			return nil
+			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal document %s", val))
 		}
 
 		if query.MaxDistance != 0 && distance >= query.MaxDistance {
-			return nil
+			return nil, nil
 		}
 
 		if query.Filters != nil {
 			matches, err := matchesFilter(doc.Metadata, query.Filters)
 			if err != nil || !matches {
-				return nil
+				return nil, nil
 			}
 		}
 
-		// Convert to query result set with distance
 		result := GlowstickQueryResultSet{
 			Id:        doc.Id,
 			Content:   doc.Content,
@@ -984,13 +981,17 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 			Distance:  distance,
 		}
 
-		return &result
+		return &result, nil
 	}
 
 	// For small result sets, process sequentially
 	if len(ids) <= 3 {
 		for i, id := range ids {
-			if doc := processDoc(int64(id), distances[i]); doc != nil {
+			doc, err := processDoc(int64(id), distances[i])
+			if err != nil {
+				return nil, err
+			}
+			if doc != nil {
 				docs = append(docs, *doc)
 			}
 		}
@@ -1012,8 +1013,10 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 	resultChan := make(chan docResult, len(ids))
 	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
 
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		start := i * chunkSize
 		end := min(start+chunkSize, len(ids))
 
@@ -1026,7 +1029,12 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 			defer wg.Done()
 
 			for j := startIdx; j < endIdx; j++ {
-				if doc := processDoc(int64(ids[j]), distances[j]); doc != nil {
+				doc, err := processDoc(int64(ids[j]), distances[j])
+				if err != nil {
+					errOnce.Do(func() { firstErr = err })
+					return
+				}
+				if doc != nil {
 					resultChan <- docResult{doc: *doc, index: j}
 				}
 			}
@@ -1038,14 +1046,21 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		close(resultChan)
 	}()
 
-	results := make(map[int]GlowstickQueryResultSet)
+	// Use slices instead of map to avoid hashing overhead
+	resultSlice := make([]GlowstickQueryResultSet, len(ids))
+	present := make([]bool, len(ids))
 	for result := range resultChan {
-		results[result.index] = result.doc
+		resultSlice[result.index] = result.doc
+		present[result.index] = true
+	}
+
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	for i := range ids {
-		if doc, exists := results[i]; exists {
-			docs = append(docs, doc)
+		if present[i] {
+			docs = append(docs, resultSlice[i])
 		}
 	}
 

@@ -1,14 +1,4 @@
-### Why Another Vector Database?
-
-ChromaDB has excellent developer experience and you should probably use it for most cases.
-
-However, ChromaDB's TypeScript SDK has a critical limitation: **no support for arrays as metadata values**. This makes it difficult to implement features like access control lists (ACLs), multi-tag filtering, or any scenario where you need to store multiple values for a single metadata field.
-
-The second motivation is **WiredTiger**—a high-performance storage engine that caught my attention. Its architecture and source code sparked my interest in database internals. Building AchillesDB became an opportunity to combine WiredTiger's robust storage capabilities with FAISS's vector search performance, creating a vector database that handles complex metadata scenarios elegantly.
-
----
-
-### The Two Pillars
+##  High level design.
 A vector database enables fast retrieval of relevant documents from a large corpus by comparing query embeddings against stored document embeddings. 
 
 This requires **two core components**:
@@ -74,7 +64,7 @@ Then you need a bridge between the two abstractions.
     ╚══════════════════════════════════════════════════════════════════╝
 ```
 
-BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you marshal any arbitrary struct into `[]byte`. We can store this in a Wiredtiger table.
+BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you marshal arbitrary structs (representing objects) into `[]byte`. We can store this in a Wiredtiger table.
 
 ---
 
