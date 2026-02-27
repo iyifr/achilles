@@ -12,7 +12,7 @@ class MessageResponse(BaseModel):
 class CreateDatabaseReq(BaseModel):
     """
     POST /database
-    prama: CreateDatabaseReq
+    path vars: CreateDatabaseReq
     """
     name: str = Field(default="default", description="Database name (defaults to 'default')")
 
@@ -48,7 +48,7 @@ class GetDatabasesRes(BaseModel):
 class DeleteDatabaseReq(BaseModel):
     """
     DELETE /database/{database_name}
-    prama: DeleteDatabaseReq
+    path vars: DeleteDatabaseReq
     """
     name: str = Field(description="Database name")
 
@@ -74,7 +74,7 @@ class CollectionCatalogEntry(BaseModel):
 class GetCollectionsReq(BaseModel):
     """
     GET /database/{database_name}/collections
-    prama: ListCollectionsReq
+    path vars: ListCollectionsReq
     """
     database_name: str
 
@@ -83,11 +83,16 @@ class GetCollectionsRes(BaseModel):
     """
     GET /database/{database_name}/collections
     """
-    collections: list[CollectionCatalogEntry]
+    # FIX: endpoint returns None if no collections instead of empty list
+    collections: Optional[list[CollectionCatalogEntry]]
     collection_count: int
 
 
-class CreateCollectionReq(BaseModel):
+class CreateCollectionReqInput(BaseModel):
+    """
+    POST /database/{database_name}/collections
+    payload: CreateCollectionReq
+    """
     name: str = Field(description="Collection name")
 
 
@@ -112,7 +117,7 @@ class Document(BaseModel):
 class GetCollectionReq(BaseModel):
     """
     GET /database/{database_name}/collections/{collection_name}
-    prama: GetCollectionReq
+    path vars: GetCollectionReq
     """
     database_name: str
     collection_name: str
@@ -123,14 +128,14 @@ class GetCollectionRes(BaseModel):
     GET /database/{database_name}/collections/{collection_name}
     """
     collection: CollectionCatalogEntry
-    documents: List[Document]
+    # documents: List[Document]
     stats: CollectionStats
 
 
 class DeleteCollectionReq(BaseModel):
     """
     DELETE /database/{database_name}/collections/{collection_name}
-    prama: DeleteCollectionReq
+    path vars: DeleteCollectionReq
     """
     database_name: str
     collection_name: str
@@ -146,7 +151,7 @@ class DeleteCollectionRes(BaseModel):
 class GetDocumentsReq(BaseModel):
     """
     GET /database/{database_name}/collections/{collection_name}/documents
-    prama: GetDocumentsReq
+    path vars: GetDocumentsReq
     """
     database_name: str
     collection_name: str
@@ -163,7 +168,7 @@ class GetDocumentsRes(BaseModel):
 class InsertDocumentsReq(BaseModel):
     """
     POST /database/{database_name}/collections/{collection_name}/documents
-    prama: InsertDocumentsReq
+    path vars: InsertDocumentsReq
     """
     database_name: str
     collection_name: str
@@ -174,10 +179,10 @@ class InsertDocumentReqInput(BaseModel):
     POST /database/{database_name}/collections/{collection_name}/documents
     payload: InsertDocumentReqInput
     """
-    id: str = Field(description="Unique document ID")
-    content: Optional[str] = Field(default=None, description="Document content/text")
-    embedding: List[float] = Field(description="Document embedding vector")
-    metadata: Dict[str, Any] = Field(default={}, description="Arbitrary metadata key-value pairs")
+    idis: list[str] = Field(description="Unique document ID")
+    documents: list[str] = Field(description="Document content/text")
+    embeddings: list[List[float]] = Field(description="Document embedding vector")
+    metadatas: list[Dict[str, Any]] = Field(default=[], description="Arbitrary metadata key-value pairs")
 
 
 class InsertDocumentsRes(BaseModel):
@@ -194,7 +199,7 @@ class InsertDocumentsRes(BaseModel):
 class UpdateDocumentsReq(BaseModel):
     """
     PUT /database/{database_name}/collections/{collection_name}/documents
-    prama: UpdateDocumentsReq
+    path vars: UpdateDocumentsReq
     """
     database_name: str
     collection_name: str
@@ -213,7 +218,7 @@ class UpdateDocumentsReqInput(BaseModel):
 class DeleteDocumentsReq(BaseModel):
     """
     DELETE /database/{database_name}/collections/{collection_name}/documents
-    prama: DeleteDocumentsReq
+    path vars: DeleteDocumentsReq
     """
     database_name: str
     collection_name: str
@@ -230,7 +235,7 @@ class DeleteDocumentsReqInput(BaseModel):
 class QueryReq(BaseModel):
     """
     POST /database/{database_name}/collections/{collection_name}/documents/query
-    prama: QueryReq
+    path vars: QueryReq
     """
     database_name: str
     collection_name: str

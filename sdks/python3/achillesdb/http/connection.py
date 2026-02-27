@@ -371,8 +371,8 @@ class SyncHttpClient(_HTTPClient):
         self,
         path: str,
         resType: type[ResModel],
-        json: Any,
-        params: Optional[dict],
+        json: Any = None,
+        params: Optional[dict] = None,
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:
@@ -386,8 +386,8 @@ class SyncHttpClient(_HTTPClient):
         self,
         path: str,
         resType: type[ResModel],
-        json: Any,
-        params: Optional[dict],
+        json: Any = None,
+        params: Optional[dict] = None,
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:
@@ -401,7 +401,7 @@ class SyncHttpClient(_HTTPClient):
         self,
         path: str,
         resType: type[ResModel],
-        params: Optional[dict],
+        params: Optional[dict] = None,
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:

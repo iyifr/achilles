@@ -140,7 +140,6 @@ class AchillesClient(_AchillesClient):
 
 
 class AsyncAchillesClient(_AchillesClient):
-
     def __init__(
         self,
         host: str = cfg.default_host,
