@@ -27,11 +27,6 @@ class BasicConfig(BaseSettings):
     default_ssl: bool = False  # DEFAULT_SSL
     default_api_base_path: str = "/api/v1"  # DEFAULT_API_BASE_PATH
 
-    @property
-    def base_url(self) -> str:
-        port_part = f":{self.default_port}" if self.default_port not in (80, 443) else ""
-        return f"{h}://{self.default_host}{port_part}"
-
     connection: ConnectionConfig = ConnectionConfig()
 
 

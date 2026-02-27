@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional, Type, TypeVar
 from urllib.parse import urljoin
+
+from pydantic import BaseModel, ValidationError
+
+from .retry import with_retry, with_retry_async
+
+from ..schemas import ErrorResponse
 
 from ..config import ConnectionConfig, get_config
 from ..errors import (
@@ -12,10 +18,15 @@ from ..errors import (
     ERROR_NOT_FOUND,
     ERROR_SERVER,
     ERROR_VALIDATION,
+    ERROR_INVALID_RESPONSE,
 )
 
 logger = logging.getLogger(__name__)
 cfg = get_config()
+
+
+ReqModel = TypeVar("ReqModel", bound=BaseModel)
+ResModel = TypeVar("ResModel", bound=BaseModel)
 
 
 def _map_status_to_code(status: Optional[int]) -> str:
@@ -32,26 +43,52 @@ def _map_status_to_code(status: Optional[int]) -> str:
     return ERROR_SERVER
 
 
-def _parse_response(response: Any) -> Any:
-    """
-    Parse a response object into a Python value.
-    Returns parsed JSON if Content-Type is application/json, else raw text.
-    Raises AchillesError on non-2xx.
-    """
+def _parse_response(
+    response: Any,
+    resType: Optional[type[ResModel]] = None,
+    expected_status: Optional[int] = None,
+) -> ResModel:
     status_code: int = response.status_code
 
-    if 200 <= status_code < 300:
-        content_type = response.headers.get("Content-Type", "")
-        if "application/json" in content_type:
-            return response.json()
-        return response.text
+    is_success = (
+        expected_status is not None and status_code == expected_status
+    ) or (
+        expected_status is None and 200 <= status_code < 300
+    )
 
-    # Non-2xx — extract server message if possible
+    if is_success:
+        content_type = response.headers.get("Content-Type", "")
+        if "application/json" not in content_type:
+            logger.warning(
+                "Expected application/json but got '%s' — attempting to parse anyway.",
+                content_type,
+            )
+
+        try:
+            raw = response.json()
+        except Exception as e:
+            raise AchillesError(
+                message=f"Failed to parse response as JSON (Content-Type: {content_type}): {e}",
+                code=ERROR_INVALID_RESPONSE,
+            ) from e
+
+        if resType is None:
+            return raw
+
+        try:
+            return resType.model_validate(raw)
+        except ValidationError as e:
+            raise AchillesError(
+                message=f"Response validation failed: {e}",
+                code=ERROR_INVALID_RESPONSE,
+            ) from e
+
     message: str = f"HTTP {status_code}"
     details: dict = {}
+
     try:
         details = response.json()
-        message = details.get("detail") or details.get("message") or message
+        message = ErrorResponse.model_validate(response.content).error
     except Exception:
         try:
             message = response.text or message
@@ -63,14 +100,24 @@ def _parse_response(response: Any) -> Any:
         code=_map_status_to_code(status_code),
         status_code=status_code,
         details=details,
+        retry_after=float(response.headers["Retry-After"])
+        if "Retry-After" in response.headers else None,
     )
 
 
-class _HTTPClient:
-    """
-    Main Http Wrapper
-    """
+def get_base_url(
+    host: str = cfg.default_host,
+    port: int = cfg.default_port,
+    api_base_path: str = cfg.default_api_base_path,
+    ssl: bool = cfg.default_ssl,
+) -> str:
+    protocol = "https" if ssl else "http"
+    host = host.strip("/")
+    api_base_path = api_base_path.strip("/")
+    return f"{protocol}://{host}:{port}/{api_base_path}"
 
+
+class _HTTPClient:
     def __init__(
         self,
         host: str = cfg.default_host,
@@ -81,6 +128,7 @@ class _HTTPClient:
         timeout: Optional[float] = None,
         connection_config: Optional[ConnectionConfig] = None,
         logger: Optional[logging.Logger] = None,
+        max_retries: int = 3,
     ):
         self.base_url = get_base_url(
             host=host,
@@ -92,14 +140,14 @@ class _HTTPClient:
         self.timeout = timeout if timeout is not None else float(cfg.default_timeout)
         self._conn_cfg = connection_config or cfg.connection
         self.logger = logger or logging.getLogger(__name__)
+        self._max_retries = max_retries
 
         self.default_headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "achillesdb-python-sdk/0.1",
+            "User-Agent": "achillesdb-python-sdk/0.1",  # NOTE: this is a placeholder version
         }
 
-        # initialise the appropriate underlying client
         if self.mode == "async":
             self._init_async()
         else:
@@ -118,7 +166,7 @@ class _HTTPClient:
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=self._conn_cfg.session_pool_connections,
             pool_maxsize=self._conn_cfg.session_pool_maxsize,
-            max_retries=0
+            max_retries=0,
         )
         self._sync_session.mount("http://", adapter)
         self._sync_session.mount("https://", adapter)
@@ -144,29 +192,58 @@ class _HTTPClient:
     def _make_url(self, path: str) -> str:
         return urljoin(self.base_url + "/", path.lstrip("/"))
 
-
     def request(
         self,
         method: str,
         path: str,
+        resType: Optional[type[ResModel]] = None,
         json: Any = None,
         params: Optional[dict] = None,
         headers: Optional[dict] = None,
         timeout: Optional[float] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
     ) -> Any:
         if self.mode == "async":
-            return self._request_async(method, path, json=json, params=params, headers=headers, timeout=timeout)
+            return self._request_async_with_retry(
+                method, path, json=json, params=params,
+                headers=headers, timeout=timeout,
+                expected_status=expected_status, resType=resType
+            ) if retry else self._request_async(
+                method, path, json=json, params=params,
+                headers=headers, timeout=timeout,
+                expected_status=expected_status, resType=resType
+            )
+        return with_retry(
+            lambda: self._request_sync(
+                method, path, json=json, params=params,
+                headers=headers, timeout=timeout,
+                expected_status=expected_status, resType=resType
+            ),
+            max_attempts=self._max_retries,
+        ) if retry else self._request_sync(
+            method, path, json=json, params=params,
+            headers=headers, timeout=timeout,
+            expected_status=expected_status, resType=resType
+        )
 
-        return self._request_sync(method, path, json=json, params=params, headers=headers, timeout=timeout)
+
+    async def _request_async_with_retry(self, method, path, **kwargs):
+        return await with_retry_async(
+            lambda: self._request_async(method, path, **kwargs),
+            max_attempts=self._max_retries,
+        )
 
     def _request_sync(
         self,
         method: str,
         path: str,
+        resType: Optional[type[ResModel]] = None,
         json: Any = None,
         params: Optional[dict] = None,
         headers: Optional[dict] = None,
         timeout: Optional[float] = None,
+        expected_status: Optional[int] = None,
     ) -> Any:
         import requests as req_lib
 
@@ -186,32 +263,25 @@ class _HTTPClient:
                 timeout=effective_timeout,
             )
         except req_lib.exceptions.Timeout as exc:
-            raise AchillesError(
-                message=f"Request timed out: {method} {url}",
-                code=ERROR_CONNECTION,
-            ) from exc
+            raise AchillesError(message=f"Request timed out: {method} {url}", code=ERROR_CONNECTION) from exc
         except req_lib.exceptions.ConnectionError as exc:
-            raise AchillesError(
-                message=f"Connection failed: {url}",
-                code=ERROR_CONNECTION,
-            ) from exc
+            raise AchillesError(message=f"Connection failed: {url}", code=ERROR_CONNECTION) from exc
         except req_lib.exceptions.RequestException as exc:
-            raise AchillesError(
-                message=str(exc),
-                code=ERROR_CONNECTION,
-            ) from exc
+            raise AchillesError(message=str(exc), code=ERROR_CONNECTION) from exc
 
         self.logger.debug("← %s %s  status=%d", method, url, resp.status_code)
-        return _parse_response(resp)
+        return _parse_response(resp, resType, expected_status)
 
     async def _request_async(
         self,
         method: str,
         path: str,
+        resType: Optional[type[ResModel]] = None,
         json: Any = None,
         params: Optional[dict] = None,
         headers: Optional[dict] = None,
         timeout: Optional[float] = None,
+        expected_status: Optional[int] = None,
     ) -> Any:
         import httpx
 
@@ -229,38 +299,208 @@ class _HTTPClient:
                 timeout=timeout if timeout is not None else self.timeout,
             )
         except httpx.TimeoutException as exc:
-            raise AchillesError(
-                message=f"Request timed out: {method} {path}",
-                code=ERROR_CONNECTION,
-            ) from exc
+            raise AchillesError(message=f"Request timed out: {method} {path}", code=ERROR_CONNECTION) from exc
         except httpx.ConnectError as exc:
-            raise AchillesError(
-                message=f"Connection failed: {path}",
-                code=ERROR_CONNECTION,
-            ) from exc
+            raise AchillesError(message=f"Connection failed: {path}", code=ERROR_CONNECTION) from exc
         except httpx.RequestError as exc:
-            raise AchillesError(
-                message=str(exc),
-                code=ERROR_CONNECTION,
-            ) from exc
+            raise AchillesError(message=str(exc), code=ERROR_CONNECTION) from exc
 
         self.logger.debug("← %s %s  status=%d", method, path, resp.status_code)
-        return _parse_response(resp)
+        return _parse_response(resp, resType, expected_status)
 
     def close(self) -> None:
-        """Close the sync session. For async, use `await aclose()`."""
         if self.mode == "sync":
             self._sync_session.close()
 
     async def aclose(self) -> None:
-        """Close the async client."""
         if self.mode == "async":
             await self._async_client.aclose()
 
 
+
 class SyncHttpClient(_HTTPClient):
-    pass
+    def __init__(self, **kwargs):
+        kwargs.setdefault("mode", "sync")
+        super().__init__(**kwargs)
+
+    def get(
+        self,
+        path: str,
+        resType: type[ResModel],
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return self.request(
+            "GET", path, resType, params=params,
+            expected_status=expected_status,
+            retry=retry,
+        )
+
+    def post(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any = None,
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = False,
+    ) -> ResModel:
+        return self.request(
+            "POST", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    def put(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any = None,
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return self.request(
+            "PUT", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    def patch(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any,
+        params: Optional[dict],
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return self.request(
+            "PATCH", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    def delete(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any,
+        params: Optional[dict],
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return self.request(
+            "DELETE", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    def head(
+        self,
+        path: str,
+        resType: type[ResModel],
+        params: Optional[dict],
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return self.request(
+            "HEAD", path, resType, params=params,
+            expected_status=expected_status,
+            retry=retry,
+        )
 
 
 class AsyncHttpClient(_HTTPClient):
-    pass
+    def __init__(self, **kwargs):
+        kwargs.setdefault("mode", "async")
+        super().__init__(**kwargs)
+
+    async def get(
+        self,
+        path: str,
+        resType: type[ResModel],
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return await self.request(
+            "GET", path, resType, params=params,
+            expected_status=expected_status,
+            retry=retry,
+        )
+
+    async def post(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any = None,
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = False,
+    ) -> ResModel:
+        return await self.request(
+            "POST", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    async def put(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any = None,
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return await self.request(
+            "PUT", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    async def patch(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any = None,
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return await self.request(
+            "PATCH", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    async def delete(
+        self,
+        path: str,
+        resType: type[ResModel],
+        json: Any = None,
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return await self.request(
+            "DELETE", path, resType, params=params,
+            json=json, expected_status=expected_status,
+            retry=retry,
+        )
+
+    async def head(
+        self,
+        path: str,
+        resType: type[ResModel],
+        params: Optional[dict] = None,
+        expected_status: Optional[int] = None,
+        retry: bool = True,
+    ) -> ResModel:
+        return await self.request(
+            "HEAD", path, resType, params=params,
+            expected_status=expected_status,
+            retry=retry,
+        )
