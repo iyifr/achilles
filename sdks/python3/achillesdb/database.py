@@ -3,6 +3,7 @@ import threading
 from typing import Callable, Literal, Optional, Union
 
 from achillesdb.api.collection import AsyncCollectionApi, SyncCollectionApi
+from achillesdb.collection import SyncCollection, AsyncCollection
 from achillesdb.http.connection import AsyncHttpClient, SyncHttpClient
 from achillesdb.schemas import CreateCollectionReqInput
 
@@ -32,6 +33,23 @@ class DatabaseImpl:
             self._collection_api = SyncCollectionApi(
                 self._http, database_name=self.name, logger=self._logger
             )
+
+    # sopos to use get_collection to populate collection
+    # def _make_collection(self, name):
+    #     if self._mode == "async":
+    #         return AsyncCollection(
+    #             name=name,
+    #             http=self._http,
+    #             embedding_function=self._embedding_function,
+    #             logger=self._logger,
+    #         )
+    #
+    #     return SyncCollection(
+    #         name=name,
+    #         http=self._http,
+    #         embedding_function=self._embedding_function,
+    #         logger=self._logger,
+    #     )
 
     def _create_collection(self, name):
         return self._collection_api.create_collection(name)

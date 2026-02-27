@@ -7,7 +7,7 @@ from typing import Awaitable, Literal, Optional, Union
 
 from ..config import get_config
 from ..http.connection import SyncHttpClient, AsyncHttpClient
-from ..util import validate_name
+from ..validators import validate_name
 
 
 cfg = get_config()

@@ -1,13 +1,15 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, model_validator
+
+from achillesdb.validators import validate_equal_lengths
 
 
 class ErrorResponse(BaseModel):
     error: str
 
 class MessageResponse(BaseModel):
-    message: str
+    message: str = Field(description="Success message")
 
 class CreateDatabaseReq(BaseModel):
     """
@@ -179,14 +181,24 @@ class InsertDocumentReqInput(BaseModel):
     POST /database/{database_name}/collections/{collection_name}/documents
     payload: InsertDocumentReqInput
     """
-    idis: list[str] = Field(description="Unique document ID")
+    ids: list[str] = Field(description="Unique document ID")
     documents: list[str] = Field(description="Document content/text")
     embeddings: list[List[float]] = Field(description="Document embedding vector")
     metadatas: list[Dict[str, Any]] = Field(default=[], description="Arbitrary metadata key-value pairs")
 
+    @model_validator(mode='after')
+    def check_equal_lengths(self) -> 'InsertDocumentReqInput':
+        validate_equal_lengths(
+            ids=self.idis,
+            documents=self.documents,
+            embeddings=self.embeddings,
+            metadatas=self.metadatas,
+        )
+        return self
 
-class InsertDocumentsRes(BaseModel):
-    message: str = Field(description="Success message")
+
+class InsertDocumentsRes(MessageResponse):
+    ...
 
 
 # class InsertDocumentsRequest(BaseModel):
@@ -215,6 +227,15 @@ class UpdateDocumentsReqInput(BaseModel):
     updates: Dict[str, Any] = Field(description="Metadata fields to update")
 
 
+
+
+class UpdateDocumentsRes(MessageResponse):
+    """
+    PUT /database/{database_name}/collections/{collection_name}/documents
+    """
+    ...
+
+
 class DeleteDocumentsReq(BaseModel):
     """
     DELETE /database/{database_name}/collections/{collection_name}/documents
@@ -230,6 +251,13 @@ class DeleteDocumentsReqInput(BaseModel):
     payload: DeleteDocumentsReqInput
     """
     document_ids: List[str] = Field(description="List of document IDs to delete")
+
+
+class DeleteDocumentsRes(MessageResponse):
+    """
+    DELETE /database/{database_name}/collections/{collection_name}/documents
+    """
+    ...
 
 
 class QueryReq(BaseModel):
