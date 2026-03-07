@@ -32,7 +32,7 @@ class _DocumentApiBase:
         return self._http.post(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             InsertDocumentsRes,
-            json=input.dict(exclude_unset=True),
+            json=input.model_dump(exclude_unset=True),
             expected_status=200,
         )
 
@@ -40,7 +40,7 @@ class _DocumentApiBase:
         return self._http.put(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             UpdateDocumentsRes,
-            json=input.dict(exclude_unset=True),
+            json=input.model_dump(exclude_unset=True),
             expected_status=200,
         )
 
@@ -48,7 +48,7 @@ class _DocumentApiBase:
         return self._http.delete(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             DeleteDocumentsRes,
-            json=input.dict(exclude_unset=True),
+            json=input.model_dump(exclude_unset=True),
             expected_status=200,
         )
 
@@ -56,7 +56,7 @@ class _DocumentApiBase:
         return self._http.post(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents/query",
             QueryRes,
-            json=input.dict(exclude_unset=True),
+            json=input.model_dump(exclude_unset=True),
             expected_status=200,
         )
 

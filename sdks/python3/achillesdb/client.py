@@ -1,10 +1,11 @@
 from __future__ import annotations
 from functools import lru_cache
 
+import threading
+
 from achillesdb.api.database import AsyncDatabaseApi, SyncDatabaseApi
 from achillesdb.errors import AchillesError
 from achillesdb.schemas import GetDatabasesRes, MessageResponse
-from .database import AsyncDatabase
 
 import logging
 from typing import Awaitable, Callable, Literal, Optional, Union
@@ -37,6 +38,8 @@ class _AchillesClient:
         self._embedding_function = embedding_function
         self._logger = logger or logging.getLogger(__name__)
         self._mode = mode
+        self._db_cache: dict[str, SyncDatabase | AsyncDatabase] = {}
+        self._db_cache_lock = threading.Lock()
 
         http_cls = AsyncHttpClient if mode == "async" else SyncHttpClient
         self._http = http_cls(
@@ -53,29 +56,33 @@ class _AchillesClient:
         else:
             self.database_api = SyncDatabaseApi(self._http, logger=self._logger)
 
-    @lru_cache
-    def _make_database(self, name: str):
-        if self._mode == "async":
-            return AsyncDatabase(
-                name=name,
-                http=self._http,
-                embedding_function=self._embedding_function,
-                logger=self._logger,
-            )
 
-        return SyncDatabase(
-            name=name,
-            http=self._http,
-            embedding_function=self._embedding_function,
-            logger=self._logger,
-        )
+    def _make_database(self, name: str):
+        with self._db_cache_lock:
+            if name not in self._db_cache:
+                cls = AsyncDatabase if self._mode == "async" else SyncDatabase
+                self._db_cache[name] = cls(
+                    name=name, http=self._http,
+                    embedding_function=self._embedding_function,
+                    logger=self._logger,
+                )
+            return self._db_cache[name]
 
     def _ping(self) -> MessageResponse:
-        try:
-            return True if self.database_api.list_databases() else False
-        except AchillesError as e:
-            self._logger.error(e)
-            return False
+        if self._mode == "async":
+            async def __ping():
+                try:
+                    return True if await self.database_api.list_databases() else False
+                except AchillesError as e:
+                    self._logger.error(e)
+                    return False
+            return __ping()
+        else:
+            try:
+                return True if self.database_api.list_databases() else False
+            except AchillesError as e:
+                self._logger.error(e)
+                return False
 
     def _create_database(self, name: str):
         return self.database_api.create_database(name)
@@ -89,7 +96,7 @@ class _AchillesClient:
     def _delete_database(self, name: str) -> MessageResponse:
         return self.database_api.delete_database(name)
 
-    def close(self) -> None:
+    def _close(self) -> None:
         if self._mode == "async":
             return self._http.aclose()
         else:
@@ -131,6 +138,9 @@ class AchillesClient(_AchillesClient):
 
     def delete_database(self, name: str) -> None:
         self._delete_database(name)
+
+    def close(self) -> None:
+        self._close()
 
     def __enter__(self):
         return self
@@ -174,8 +184,11 @@ class AsyncAchillesClient(_AchillesClient):
     async def delete_database(self, name: str) -> None:
         await self._delete_database(name)
 
+    async def close(self) -> None:
+        await self._close()
+
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *_):
-        await self.close()
+        await self._close()

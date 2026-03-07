@@ -86,8 +86,8 @@ class AsyncDatabase(DatabaseImpl):
         )
 
     async def create_collection(self, name):
-        input = CreateCollectionReqInput(name=name)
-        return await self._create_collection(input)
+        _input = CreateCollectionReqInput(name=name)
+        return await self._create_collection(_input)
 
     async def list_collections(self):
         return await self._list_collections()
@@ -119,8 +119,8 @@ class SyncDatabase(DatabaseImpl):
         )
 
     def create_collection(self, name):
-        input = CreateCollectionReqInput(name=name)
-        return self._create_collection(input)
+        _input = CreateCollectionReqInput(name=name)
+        return self._create_collection(_input)
 
     def list_collections(self):
         return self._list_collections()

@@ -2,7 +2,7 @@ def validate_equal_lengths(**kwargs) -> None:
     """
     makes sure all fields have the same length
     """
-    lengths = {key: len(val) for key, val in kwargs.items() if val}
+    lengths = {key: len(val) for key, val in kwargs.items() if val is not None}
 
     if not lengths:
         return

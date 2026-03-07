@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Callable, Literal, Optional, Type, TypeVar
-from urllib.parse import urljoin
 
 from pydantic import BaseModel, ValidationError
 
@@ -63,7 +62,6 @@ def _parse_response(
                 "Expected application/json but got '%s' — attempting to parse anyway.",
                 content_type,
             )
-
         try:
             raw = response.json()
         except Exception as e:
@@ -95,13 +93,26 @@ def _parse_response(
         except Exception:
             pass
 
+    # try:
+    #     error_body = response.json()
+    #     message = error_body.get("error") or error_body.get("message") or message
+    #     details = error_body
+    # except Exception:
+    #     try:
+    #         message = response.text or message
+    #     except Exception:
+    #         pass
+    try:
+        retry_after = float(response.headers["Retry-After"])
+    except (ValueError, TypeError):
+        retry_after = None
+
     raise AchillesError(
         message=message,
         code=_map_status_to_code(status_code),
         status_code=status_code,
         details=details,
-        retry_after=float(response.headers["Retry-After"])
-        if "Retry-After" in response.headers else None,
+        retry_after=retry_after,
     )
 
 
@@ -139,8 +150,15 @@ class _HTTPClient:
         self.mode = mode
         self.timeout = timeout if timeout is not None else float(cfg.default_timeout)
         self._conn_cfg = connection_config or cfg.connection
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger: logging.Logger = logger or logging.getLogger(__name__)
         self._max_retries = max_retries
+        self.ssl = ssl
+
+        if not ssl:
+            logger.warning(
+                "SSL is disabled for %s:%s — not recommended outside localhost.",
+                host, port,
+            )
 
         self.default_headers = {
             "Accept": "application/json",
@@ -190,7 +208,7 @@ class _HTTPClient:
         )
 
     def _make_url(self, path: str) -> str:
-        return urljoin(self.base_url + "/", path.lstrip("/"))
+        return self.base_url.rstrip("/") + "/" + path.lstrip("/")
 
     def request(
         self,
@@ -311,10 +329,14 @@ class _HTTPClient:
     def close(self) -> None:
         if self.mode == "sync":
             self._sync_session.close()
+        else:
+            raise ValueError("this is an sync client session mathod and not async")
 
     async def aclose(self) -> None:
         if self.mode == "async":
             await self._async_client.aclose()
+        else:
+            raise ValueError("this is an async client session mathod and not sync")
 
 
 
@@ -359,7 +381,7 @@ class SyncHttpClient(_HTTPClient):
         json: Any = None,
         params: Optional[dict] = None,
         expected_status: Optional[int] = None,
-        retry: bool = True,
+        retry: bool = False,
     ) -> ResModel:
         return self.request(
             "PUT", path, resType, params=params,
@@ -453,7 +475,7 @@ class AsyncHttpClient(_HTTPClient):
         json: Any = None,
         params: Optional[dict] = None,
         expected_status: Optional[int] = None,
-        retry: bool = True,
+        retry: bool = False,
     ) -> ResModel:
         return await self.request(
             "PUT", path, resType, params=params,

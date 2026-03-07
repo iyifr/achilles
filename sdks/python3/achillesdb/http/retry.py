@@ -5,11 +5,12 @@ import logging
 import random
 import time
 from typing import Callable, Optional, TypeVar
-from ..errors import AchillesError
+from ..errors import ERROR_CONNECTION, AchillesError
 
 T = TypeVar("T")
 
 RETRYABLE_STATUSES = frozenset({429, 502, 503, 504})
+IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "DELETE", "OPTIONS"})
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,16 @@ def _backoff(attempt: int, retry_after: Optional[float]) -> float:
     return random.uniform(0, ceiling)
 
 
-def _should_retry(exc: Exception, attempt: int, max_attempts: int) -> bool:
+def _should_retry(exc, attempt, max_attempts, method: str = "") -> bool:
     if attempt >= max_attempts:
         return False
-    if isinstance(exc, AchillesError) and exc.status_code in RETRYABLE_STATUSES:
+    if not isinstance(exc, AchillesError):
+        return False
+    if method.upper() not in IDEMPOTENT_METHODS:
+        return False   # never retry mutating operations
+    if exc.code == ERROR_CONNECTION:
         return True
-    return False
+    return exc.status_code in RETRYABLE_STATUSES
 
 
 def with_retry(

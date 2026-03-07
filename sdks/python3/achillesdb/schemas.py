@@ -6,7 +6,7 @@ from achillesdb.validators import validate_equal_lengths
 
 
 class ErrorResponse(BaseModel):
-    error: str
+    error: str = ""
 
 class MessageResponse(BaseModel):
     message: str = Field(description="Success message")
@@ -85,9 +85,15 @@ class GetCollectionsRes(BaseModel):
     """
     GET /database/{database_name}/collections
     """
-    # FIX: endpoint returns None if no collections instead of empty list
+    # FIX: API endpoint returns None if no collections instead of empty list
     collections: Optional[list[CollectionCatalogEntry]]
     collection_count: int
+
+    @model_validator(mode='after')
+    def normalize_collections(self) -> 'GetCollectionsRes':
+        if self.collections is None:
+            self.collections = []
+        return self
 
 
 class CreateCollectionReqInput(BaseModel):
@@ -113,7 +119,7 @@ class CollectionStats(BaseModel):
 class Document(BaseModel):
     id: str
     content: str
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class GetCollectionReq(BaseModel):
@@ -184,12 +190,33 @@ class InsertDocumentReqInput(BaseModel):
     ids: list[str] = Field(description="Unique document ID")
     documents: list[str] = Field(description="Document content/text")
     embeddings: list[List[float]] = Field(description="Document embedding vector")
-    metadatas: list[Dict[str, Any]] = Field(default=[], description="Arbitrary metadata key-value pairs")
+    metadatas: list[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Arbitrary metadata key-value pairs"
+    )
 
     @model_validator(mode='after')
-    def check_equal_lengths(self) -> 'InsertDocumentReqInput':
+    def check_validations(self) -> 'InsertDocumentReqInput':
+        # validate embeddings is not empty
+        if not self.embeddings:
+            raise ValueError("Embeddings must be non-empty")
+
+        # validate dimensions
+        dim = len(self.embeddings[0])
+        for i, emb in enumerate(self.embeddings[1:], 1):
+            if len(emb) != dim:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {dim}, got {len(emb)} at index {i}"
+                )
+
+        # validate no duplicates in ids
+        if len(self.ids) != len(set(self.ids)):
+            dupes = [id for id in self.ids if self.ids.count(id) > 1]
+            raise ValueError(f"ids array contains duplicates: {set(dupes)}")
+
+        # validate equal lengths
         validate_equal_lengths(
-            ids=self.idis,
+            ids=self.ids,
             documents=self.documents,
             embeddings=self.embeddings,
             metadatas=self.metadatas,
@@ -277,6 +304,13 @@ class QueryReqInput(BaseModel):
     query_embedding: List[float] = Field(description="Query embedding vector")
     top_k: int = Field(default=10, description="Number of results to return")
     where: Dict[str, Any] = Field(default={}, description="Metadata filter conditions")
+
+    @model_validator(mode='after')
+    def check_validations(self) -> 'QueryReqInput':
+        # validate embeddings is not empty
+        if not self.query_embedding:
+            raise ValueError("Embeddings must be non-empty")
+        return self
 
 
 class QueryRes(BaseModel):

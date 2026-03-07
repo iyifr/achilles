@@ -3,10 +3,10 @@ from typing import Awaitable, Literal, Optional, Union
 
 from achillesdb.http.connection import AsyncHttpClient, SyncHttpClient
 from achillesdb.schemas import CreateCollectionReqInput, CreateCollectionRes, DeleteCollectionRes, GetCollectionRes, GetCollectionsRes
-from achillesdb.util import validate_name
+from achillesdb.validators import validate_name
 
 
-class _ColectionApiBase:
+class _CollectionApiBase:
     def __init__(
         self,
         http_client: Union[SyncHttpClient, AsyncHttpClient],
@@ -32,7 +32,7 @@ class _ColectionApiBase:
         return self._http.post(
             f"/database/{self._database_name}/collections",
             CreateCollectionRes,
-            json=input.dict(exclude_unset=True),
+            json=input.model_dump(exclude_unset=True),
             expected_status=200,
         )
 
@@ -52,7 +52,7 @@ class _ColectionApiBase:
         )
 
 
-class AsyncCollectionApi(_ColectionApiBase):
+class AsyncCollectionApi(_CollectionApiBase):
     def __init__(
         self,
         http_client: AsyncHttpClient,
@@ -83,7 +83,7 @@ class AsyncCollectionApi(_ColectionApiBase):
         return await self._get_collection(collection_name)
 
 
-class SyncCollectionApi(_ColectionApiBase):
+class SyncCollectionApi(_CollectionApiBase):
     def __init__(
         self,
         http_client: SyncHttpClient,
