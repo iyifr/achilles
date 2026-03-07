@@ -1,11 +1,13 @@
+import asyncio
 import logging
 import threading
-from typing import Callable, Literal, Optional, Union
+from typing import Any, Awaitable, Callable, List, Literal, Optional, Union, cast
 
 from achillesdb.api.collection import AsyncCollectionApi, SyncCollectionApi
-from achillesdb.collection import SyncCollection, AsyncCollection
+from achillesdb.collection import CollectionImpl, SyncCollection, AsyncCollection
+from achillesdb.errors import ERROR_INVALID_RESPONSE, AchillesError
 from achillesdb.http.connection import AsyncHttpClient, SyncHttpClient
-from achillesdb.schemas import CreateCollectionReqInput
+from achillesdb.schemas import CreateCollectionReqInput, QueryRes, WhereClause
 
 
 class DatabaseImpl:
@@ -35,21 +37,25 @@ class DatabaseImpl:
             )
 
     # sopos to use get_collection to populate collection
-    # def _make_collection(self, name):
-    #     if self._mode == "async":
-    #         return AsyncCollection(
-    #             name=name,
-    #             http=self._http,
-    #             embedding_function=self._embedding_function,
-    #             logger=self._logger,
-    #         )
-    #
-    #     return SyncCollection(
-    #         name=name,
-    #         http=self._http,
-    #         embedding_function=self._embedding_function,
-    #         logger=self._logger,
-    #     )
+    def _make_collection(self, name, id):
+        if self._mode == "async":
+            return AsyncCollection(
+                id=id,
+                name=name,
+                database=self.name,
+                http_client=self._http,
+                embedding_function=self._embedding_function,
+                logger=self._logger,
+            )
+
+        return SyncCollection(
+            id=id,
+            name=name,
+            database=self.name,
+            http_client=self._http,
+            embedding_function=self._embedding_function,
+            logger=self._logger,
+        )
 
     def _create_collection(self, name):
         return self._collection_api.create_collection(name)
@@ -57,8 +63,21 @@ class DatabaseImpl:
     def _list_collections(self):
         return self._collection_api.list_collections()
 
-    def _collection(self, name):
-        ...
+    def _collection(self, name) -> Union[SyncCollection, AsyncCollection]:
+        if self._mode == "async":
+            async def _coll(name):
+                collection = await self._get_collection(name)
+                return self._make_collection(
+                    name=name,
+                    id=collection.collection.id,
+                )
+            return _coll(name)
+        else:
+            collection = self._get_collection(name)
+            return self._make_collection(
+                name=name,
+                id=collection.collection.id,
+            )
 
     def _get_collection(self, name):
         return self._collection_api.get_collection(name)
@@ -66,8 +85,55 @@ class DatabaseImpl:
     def _delete_collection(self, name):
         return self._collection_api.delete_collection(name)
 
-    def _query_collections(self, opts=None):
-        ...
+    def _query_collections(
+        self,
+        collection_names: List[str],
+        query: str,
+        query_embedding: Optional[List[float]],
+        top_k: int,
+        where: Optional[Union[dict[str, Any], WhereClause]],
+    ):
+        if isinstance(where, dict):
+            where = WhereClause(**where)
+        # NOTE: API: need endpoint to get multiple collections details
+        try:
+            collections = [
+                self._collection(name) for name in collection_names
+            ]
+        except Exception as e:
+            raise AchillesError(
+                message=f"Failed to get collections: {e}",
+                code=ERROR_INVALID_RESPONSE,
+            ) from e
+
+        if self._mode == "async":
+            async def _aquery_collections():
+                _collections = await asyncio.gather(
+                    *cast(list[Awaitable[AsyncCollection]], collections)
+                )
+                # get the results from each collection
+                results = [
+                    collection.query_documents(query, query_embedding, top_k, where)
+                    for collection in _collections
+                ]
+                results: list[QueryRes] = await asyncio.gather(
+                    *cast(list[Awaitable[QueryRes]], results)
+                )
+                docs = [doc for docs in results for doc in docs.documents]
+
+                # slice the results and rerank
+                return sorted(docs, key=lambda d: d.distance)[:top_k]
+            return _aquery_collections()
+
+        # get the results from each collection
+        results: List[QueryRes] = [
+            collection.query_documents(query, query_embedding, top_k, where)
+            for collection in collections
+        ]
+        docs = [doc for docs in results for doc in docs.documents]
+        return sorted(docs, key=lambda d: d.distance)[:top_k]
+
+
 
 class AsyncDatabase(DatabaseImpl):
     def __init__(
@@ -99,8 +165,25 @@ class AsyncDatabase(DatabaseImpl):
         return await self._delete_collection(name)
 
     # TODO: implement quering from multiple collections at once
-    async def query_collections(self, opts=None):
-        return await self._query_collections(opts)
+    # NOTE: API: no direct endpoint to handle this
+    async def query_collections(
+        self,
+        collection_names: List[str],
+        query: str,
+        query_embedding: Optional[List[float]],
+        top_k: int,
+        where: Optional[Union[dict[str, Any], WhereClause]],
+    ):
+        return await self._query_collections(
+            collection_names=collection_names,
+            query=query,
+            query_embedding=query_embedding,
+            top_k=top_k,
+            where=where,
+        )
+
+    async def collection(self, name):
+        return await self._collection(name)
 
 class SyncDatabase(DatabaseImpl):
     def __init__(
@@ -132,5 +215,21 @@ class SyncDatabase(DatabaseImpl):
         return self._delete_collection(name)
 
     # TODO: implement quering from multiple collections at once
-    def query_collections(self, opts=None):
-        return self._query_collections(opts)
+    def query_collections(
+        self,
+        collection_names: List[str],
+        query: str,
+        query_embedding: Optional[List[float]],
+        top_k: int,
+        where: Optional[Union[dict[str, Any], WhereClause]],
+    ):
+        return self._query_collections(
+            collection_names=collection_names,
+            query=query,
+            query_embedding=query_embedding,
+            top_k=top_k,
+            where=where,
+        )
+
+    def collection(self, name):
+        return self._collection(name)

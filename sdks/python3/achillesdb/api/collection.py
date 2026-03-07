@@ -36,6 +36,9 @@ class _CollectionApiBase:
             expected_status=200,
         )
 
+    # BUG: API: there is a problem with the deletion of collections
+    # when a collection is deleted and then you try to create it again,
+    # it says that the collection exists but does not create the collection
     def _delete_collection(self, collection_name: str):
         validate_name(collection_name, "Collection name")
         return self._http.delete(

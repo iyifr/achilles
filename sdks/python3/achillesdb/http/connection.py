@@ -103,7 +103,8 @@ def _parse_response(
     #     except Exception:
     #         pass
     try:
-        retry_after = float(response.headers["Retry-After"])
+        retry_after_raw = response.headers.get("Retry-After")
+        retry_after = float(retry_after_raw) if retry_after_raw is not None else None
     except (ValueError, TypeError):
         retry_after = None
 

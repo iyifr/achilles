@@ -1,11 +1,13 @@
 import logging
 from typing import Any, Awaitable, Callable, List, Literal, Optional, Union, cast
 
+import uuid
+
 from achillesdb.api.collection import AsyncCollectionApi, SyncCollectionApi
 from achillesdb.api.document import AsyncDocumentApi, SyncDocumentApi
 from achillesdb.errors import ERROR_VALIDATION, AchillesError
 from achillesdb.http.connection import AsyncHttpClient, SyncHttpClient
-from achillesdb.schemas import DeleteDocumentsReqInput, GetDocumentsRes, InsertDocumentReqInput, InsertDocumentsRes, QueryReqInput, UpdateDocumentsReqInput
+from achillesdb.schemas import DeleteDocumentsReqInput, GetDocumentsRes, InsertDocumentReqInput, InsertDocumentsRes, QueryReqInput, UpdateDocumentsReqInput, WhereClause
 from achillesdb.types import EmbeddingFn
 
 
@@ -59,12 +61,13 @@ class CollectionImpl:
         ids: list[str],
         documents: list[str],
         embeddings: Optional[list[list[float]]],
-        metadatas: list[dict[str, Any]],
-        before_insert: Optional[Callable] = None,
+        metadatas: Optional[list[dict[str, Any]]],
+        before_insert: Optional[Callable[[List[str]], List[str]]] = None,
     ):
         # TODO: review error handling
         # TODO: implement doc embedding
-        # TODO: implement id generation
+        # FIX: API: the endpoint seems to be accepting duplicate ids
+
         if embeddings is None:
             if self.embedding_function is None:
                 raise AchillesError(
@@ -115,7 +118,7 @@ class CollectionImpl:
         self,
         document_ids: list[str],
     ):
-        # TODO: API implement partial delete handling: need to return deleted ids
+        # TODO: API: implement partial delete handling: need to return deleted ids
         # and maybe retry deleting the rest of the ids
         return self._documents_api.delete_documents(
             DeleteDocumentsReqInput(
@@ -136,7 +139,8 @@ class CollectionImpl:
             # TODO: set default embedding function
             if self.mode == "async":
                 async def _get_embeddings():
-                    embeddings = await self.embedding_function(query)[0]
+                    embeddings = await self.embedding_function(query)
+                    embeddings = embeddings[0]
 
                     return QueryReqInput(
                         query_embedding=embeddings, top_k=top_k, where=where
@@ -185,7 +189,7 @@ class SyncCollection(CollectionImpl):
         documents: list[str],
         embeddings: Optional[list[list[float]]],
         metadatas: list[dict[str, Any]],
-        before_insert: Optional[Callable] = None,
+        before_insert: Optional[Callable[[List[str]], List[str]]] = None,
     ):
         return self._add_documents(
             ids, documents, embeddings, metadatas, before_insert
@@ -217,8 +221,10 @@ class SyncCollection(CollectionImpl):
         query: str,
         query_embedding: Optional[List[float]],
         top_k: int,
-        where: dict[str, Any],
+        where: Optional[Union[dict[str, Any], WhereClause]],
     ):
+        if isinstance(where, dict):
+            where = WhereClause(**where)
         return self._query(
             query, query_embedding, top_k, where
         )
@@ -255,7 +261,7 @@ class AsyncCollection(CollectionImpl):
         documents: list[str],
         embeddings: Optional[list[list[float]]],
         metadatas: list[dict[str, Any]],
-        before_insert: Optional[Callable] = None,
+        before_insert: Optional[Callable[[List[str]], List[str]]] = None,
     ):
         return await self._add_documents(
             ids, documents, embeddings, metadatas, before_insert

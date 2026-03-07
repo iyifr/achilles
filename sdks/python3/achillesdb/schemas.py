@@ -1,8 +1,11 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field, RootModel, model_validator
 
 from achillesdb.validators import validate_equal_lengths
+
+
+Scalar = Union[str, int, float, bool]
 
 
 class ErrorResponse(BaseModel):
@@ -85,7 +88,7 @@ class GetCollectionsRes(BaseModel):
     """
     GET /database/{database_name}/collections
     """
-    # FIX: API endpoint returns None if no collections instead of empty list
+    # FIX: API: endpoint returns None if no collections instead of empty list
     collections: Optional[list[CollectionCatalogEntry]]
     collection_count: int
 
@@ -120,6 +123,10 @@ class Document(BaseModel):
     id: str
     content: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # NOTE: distance is not available in a normal get_documents response
+    distance: float = Field(
+        description="Distance from query embedding", default=0.0
+    )
 
 
 class GetCollectionReq(BaseModel):
@@ -303,7 +310,14 @@ class QueryReqInput(BaseModel):
     """
     query_embedding: List[float] = Field(description="Query embedding vector")
     top_k: int = Field(default=10, description="Number of results to return")
-    where: Dict[str, Any] = Field(default={}, description="Metadata filter conditions")
+    where: Optional['WhereClause'] = Field(default=None, description="Metadata filter conditions")
+
+    def model_dump(self, **kwargs):
+        # serializes with aliases convert W.eq("category", "tech") to {"category": "tech"}
+        d = super().model_dump(**kwargs)
+        if self.where is not None:
+            d["where"] = self.where.to_dict()
+        return d
 
     @model_validator(mode='after')
     def check_validations(self) -> 'QueryReqInput':
@@ -319,3 +333,66 @@ class QueryRes(BaseModel):
     """
     documents: List[Document]
     doc_count: int
+
+
+
+
+
+# Comparison operators
+class ComparisonOp(BaseModel):
+    # greater than
+    gt:  Optional[Union[int, float]] = Field(None, alias="$gt")
+    # greater than or equal
+    gte: Optional[Union[int, float]] = Field(None, alias="$gte")
+    # less than
+    lt:  Optional[Union[int, float]] = Field(None, alias="$lt")
+    # less than or equal
+    lte: Optional[Union[int, float]] = Field(None, alias="$lte")
+    # not equal
+    eq:  Optional[Scalar] = Field(None, alias="$eq")
+    # not equal
+    ne:  Optional[Scalar] = Field(None, alias="$ne")
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def at_least_one(self):
+        if not any([self.gt, self.gte, self.lt, self.lte,
+                    self.eq, self.ne]):
+            raise ValueError("ComparisonOp must have at least one operator")
+        return self
+
+# $in operator
+class InOp(BaseModel):
+    in_: list[Scalar] = Field(alias="$in")
+    model_config = {"populate_by_name": True}
+
+
+# $arrContains operator
+class ArrContainsOp(BaseModel):
+    arr_contains: list[Scalar] = Field(alias="$arrContains")
+    model_config = {"populate_by_name": True}
+
+
+# A field value is either a scalar (equality shorthand) or an operator object
+FieldValue = Union[Scalar, ComparisonOp, InOp, ArrContainsOp]
+
+
+class WhereClause(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    and_: Optional[list["WhereClause"]] = Field(None, alias="$and")
+    or_:  Optional[list["WhereClause"]] = Field(None, alias="$or")
+
+    # extra fields are the user's metadata field conditions
+    # e.g. {"category": "tech", "year": {"$gt": 2022}}
+
+    def to_dict(self) -> dict:
+        return self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            exclude_unset=True,
+        )
+
+
+WhereClause.model_rebuild()
