@@ -18,7 +18,7 @@ class W:
 
     @staticmethod
     def eq(field: str, value: Scalar) -> WhereClause:
-        return WhereClause(**{field: value})
+        return WhereClause(**{field: {"$eq": value}})
 
     @staticmethod
     def gt(field: str, value: int | float) -> WhereClause:

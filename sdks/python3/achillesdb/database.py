@@ -15,6 +15,8 @@ from achillesdb.schemas import (
     GetCollectionRes, GetCollectionsRes,
     QueryRes, WhereClause,
 )
+from achillesdb.types import QueryDocDict
+from achillesdb.util import get_collections_name
 
 
 class DatabaseImpl:
@@ -43,6 +45,12 @@ class DatabaseImpl:
                 cast(SyncHttpClient, self._http), database_name=self.name, logger=self._logger
             )
 
+    def __str__(self) -> str:
+        return f"<{self.__class__.__name__} name={self.name}>"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} name={self.name}>"
+
     # sopos to use get_collection to populate collection
     def _make_collection(self, name: str, id: str) -> SyncCollection | AsyncCollection:
         if self._mode == "async":
@@ -63,6 +71,21 @@ class DatabaseImpl:
             embedding_function=self._embedding_function,
             logger=self._logger,
         )
+
+    def _collection_from_res(self, res: GetCollectionRes) -> SyncCollection | AsyncCollection:
+        return self._make_collection(
+            name=res.collection.ns,
+            id=res.collection.id,
+        )
+
+    def _collections_from_res(self, res: GetCollectionsRes) -> list[SyncCollection | AsyncCollection]:
+        return [
+            self._make_collection(
+                name=coll.ns,
+                id=coll.id,
+            )
+            for coll in res.collections
+        ]
 
     def _create_collection(
         self, name: CreateCollectionReqInput
@@ -97,10 +120,10 @@ class DatabaseImpl:
     def _query_collections(
         self,
         collection_names: list[str],
-        query: str | None,
-        query_embedding: list[float] | None,
         top_k: int,
-        where: dict[str, Any] | WhereClause | None,
+        query_embedding: list[float] | None = None,
+        query: str | None = None,
+        where: dict[str, Any] | WhereClause | None = None
     ) -> list[Document] | Awaitable[list[Document]]:
         if isinstance(where, dict):
             where = WhereClause(**where)
@@ -122,7 +145,7 @@ class DatabaseImpl:
                 )
                 # get the results from each collection
                 results = [
-                    collection.query_documents(query, query_embedding, top_k, where)
+                    collection._query(top_k, query_embedding, query, where)
                     for collection in _collections
                 ]
                 results: list[QueryRes] = await asyncio.gather(
@@ -131,16 +154,16 @@ class DatabaseImpl:
                 docs = [doc for docs in results for doc in docs.documents]
 
                 # slice the results and rerank
-                return sorted(docs, key=lambda d: d.distance)[:top_k]
+                return sorted(docs, key=lambda d: getattr(d, "distance", 0))[:top_k]
             return _aquery_collections()
 
         # get the results from each collection
         results: list[QueryRes] = [
-            collection.query_documents(query, query_embedding, top_k, where)
+            collection._query(top_k, query_embedding, query, where)
             for collection in cast(list[SyncCollection], collections)
         ]
         docs = [doc for docs in results for doc in docs.documents]
-        return sorted(docs, key=lambda d: d.distance)[:top_k]
+        return sorted(docs, key=lambda d: getattr(d, "distance", 0))[:top_k]
 
 
 class AsyncDatabase(DatabaseImpl):
@@ -159,36 +182,51 @@ class AsyncDatabase(DatabaseImpl):
             mode="async",
         )
 
-    async def create_collection(self, name: str) -> CreateCollectionRes:
+    async def create_collection(self, name: str) -> AsyncCollection:
         _input = CreateCollectionReqInput(name=name)
-        return await cast(Awaitable[CreateCollectionRes], self._create_collection(_input))
+        await cast(Awaitable[CreateCollectionRes], self._create_collection(_input))
+        return await self.collection(name)
 
-    async def list_collections(self) -> GetCollectionsRes:
-        return await cast(Awaitable[GetCollectionsRes], self._list_collections())
+    async def list_collections(self) -> list[AsyncCollection]:
+        collections = await cast(Awaitable[GetCollectionsRes], self._list_collections())
+        return [
+            self._make_collection(
+                name=get_collections_name(coll.ns),
+                id=coll.id,
+            )
+            for coll in collections.collections
+        ]
 
-    async def get_collection(self, name: str) -> GetCollectionRes:
-        return await cast(Awaitable[GetCollectionRes], self._get_collection(name))
+    async def get_collection(self, name: str) -> AsyncCollection:
+        collection = await cast(Awaitable[GetCollectionRes], self._get_collection(name))
+        return self._make_collection(
+            name=name,
+            id=collection.collection.id,
+        )
 
     async def delete_collection(self, name: str) -> DeleteCollectionRes:
-        return await cast(Awaitable[DeleteCollectionRes], self._delete_collection(name))
+        await cast(Awaitable[DeleteCollectionRes], self._delete_collection(name))
 
     # TODO: implement quering from multiple collections at once
     # NOTE: API: no direct endpoint to handle this
     async def query_collections(
         self,
         collection_names: list[str],
-        query: str | None,
-        query_embedding: list[float] | None,
         top_k: int,
-        where: dict[str, Any] | WhereClause | None,
-    ) -> list[Document]:
-        return await cast(Awaitable[list[Document]], self._query_collections(
+        query_embedding: list[float] | None = None,
+        query: str | None = None,
+        where: dict[str, Any] | WhereClause | None = None
+    ) -> list[QueryDocDict]:
+        docs = await cast(Awaitable[list[Document]], self._query_collections(
             collection_names=collection_names,
             query=query,
             query_embedding=query_embedding,
             top_k=top_k,
             where=where,
         ))
+        return [
+            doc.model_dump() for doc in docs
+        ]
 
     async def collection(self, name: str) -> AsyncCollection:
         return await cast(Awaitable[AsyncCollection], self._collection(name))
@@ -210,35 +248,50 @@ class SyncDatabase(DatabaseImpl):
             mode="sync",
         )
 
-    def create_collection(self, name: str) -> CreateCollectionRes:
+    def create_collection(self, name: str) -> SyncCollection:
         _input = CreateCollectionReqInput(name=name)
-        return cast(CreateCollectionRes, self._create_collection(_input))
+        cast(CreateCollectionRes, self._create_collection(_input))
+        return self.collection(name)
 
-    def list_collections(self) -> GetCollectionsRes:
-        return cast(GetCollectionsRes, self._list_collections())
+    def list_collections(self) -> list[SyncCollection]:
+        collections = cast(GetCollectionsRes, self._list_collections())
+        return [
+            self._make_collection(
+                name=get_collections_name(coll.ns),
+                id=coll.id,
+            )
+            for coll in collections.collections
+        ]
 
-    def get_collection(self, name: str) -> GetCollectionRes:
-        return cast(GetCollectionRes, self._get_collection(name))
+    def get_collection(self, name: str) -> SyncCollection:
+        collection = cast(GetCollectionRes, self._get_collection(name))
+        return self._make_collection(
+            name=name,
+            id=collection.collection.id,
+        )
 
-    def delete_collection(self, name: str) -> DeleteCollectionRes:
-        return cast(DeleteCollectionRes, self._delete_collection(name))
+    def delete_collection(self, name: str) -> None:
+        cast(DeleteCollectionRes, self._delete_collection(name))
 
     # TODO: implement quering from multiple collections at once
     def query_collections(
         self,
         collection_names: list[str],
-        query: str | None,
-        query_embedding: list[float] | None,
         top_k: int,
-        where: dict[str, Any] | WhereClause | None,
-    ) -> list[Document]:
-        return cast(list[Document], self._query_collections(
+        query_embedding: list[float] | None = None,
+        query: str | None = None,
+        where: dict[str, Any] | WhereClause | None = None
+    ) -> list[QueryDocDict]:
+        docs = cast(list[Document], self._query_collections(
             collection_names=collection_names,
             query=query,
             query_embedding=query_embedding,
             top_k=top_k,
             where=where,
         ))
+        return [
+            doc.model_dump() for doc in docs
+        ]
 
     def collection(self, name: str) -> SyncCollection:
         return cast(SyncCollection, self._collection(name))

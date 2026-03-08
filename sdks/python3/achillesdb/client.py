@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 
+import asyncio
 import threading
 
 from achillesdb.api.database import AsyncDatabaseApi, SyncDatabaseApi
@@ -56,6 +57,12 @@ class _AchillesClient:
             self.database_api = AsyncDatabaseApi(self._http, logger=self._logger)  # type: ignore[arg-type]
         else:
             self.database_api = SyncDatabaseApi(self._http, logger=self._logger)  # type: ignore[arg-type, assignment]
+
+    def __str__(self) -> str:
+        return f"<{self.__class__.__name__} host={self._host} port={self._port}>"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} host={self._host} port={self._port}>"
 
     def _make_database(self, name: str) -> SyncDatabase | AsyncDatabase:
         with self._db_cache_lock:
@@ -127,11 +134,15 @@ class AchillesClient(_AchillesClient):
     def ping(self) -> bool:
         return cast(bool, self._ping())
 
-    def create_database(self, name: str) -> CreateDatabaseRes:
-        return cast(CreateDatabaseRes, self._create_database(name))
+    def create_database(self, name: str) -> SyncDatabase:
+        cast(CreateDatabaseRes, self._create_database(name))
+        return self.database(name)
 
-    def list_databases(self) -> GetDatabasesRes:
-        return cast(GetDatabasesRes, self._list_databases())
+    def list_databases(self) -> list[SyncDatabase]:
+        database = self._list_databases()
+        return [
+            self._make_database(db.name) for db in database.databases
+        ]
 
     def database(self, name: str) -> SyncDatabase:
         return cast(SyncDatabase, self._database(name))
@@ -172,11 +183,15 @@ class AsyncAchillesClient(_AchillesClient):
     async def ping(self) -> bool:
         return await cast(Awaitable[bool], self._ping())
 
-    async def create_database(self, name: str) -> CreateDatabaseRes:
-        return await cast(Awaitable[CreateDatabaseRes], self._create_database(name))
+    async def create_database(self, name: str) -> AsyncDatabase:
+        await cast(Awaitable[CreateDatabaseRes], self._create_database(name))
+        return self.database(name)
 
-    async def list_databases(self) -> GetDatabasesRes:
-        return await cast(Awaitable[GetDatabasesRes], self._list_databases())
+    async def list_databases(self) -> list[AsyncDatabase]:
+        database = await cast(Awaitable[GetDatabasesRes], self._list_databases())
+        return [
+            self._make_database(db.name) for db in database.databases
+        ]
 
     def database(self, name: str) -> AsyncDatabase:
         return cast(AsyncDatabase, self._database(name))

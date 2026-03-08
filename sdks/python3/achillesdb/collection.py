@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any, Awaitable, Callable, Literal, cast
 
@@ -16,7 +17,7 @@ from achillesdb.schemas import (
     UpdateDocumentsReqInput, UpdateDocumentsRes,
     WhereClause,
 )
-from achillesdb.types import EmbeddingFn
+from achillesdb.types import EmbeddingFn, GetDocDict, QueryDocDict
 
 
 class CollectionImpl:
@@ -53,6 +54,12 @@ class CollectionImpl:
                 cast(SyncHttpClient, self._http_client), database_name=self.database, logger=self.logger
             )
 
+    def __str__(self) -> str:
+        return f"<{self.__class__.__name__} name={self.name} database={self.database}>"
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} name={self.name} database={self.database}>"
+
     def _count(self) -> int | Awaitable[int]:
         if self.mode == "async":
             async def _count() -> int:
@@ -86,10 +93,14 @@ class CollectionImpl:
             _embeddings = self.embedding_function(documents)
             if self.mode == "async":
                 async def _get_docs():
+                    if inspect.isawaitable(_embeddings):
+                        embeddings = await _embeddings
+                    else:
+                        embeddings = _embeddings
                     docs_data = InsertDocumentReqInput(
                         ids=ids,
                         documents=before_insert(documents) if before_insert else documents,
-                        embeddings=await cast(Awaitable[list[list[float]]], _embeddings),
+                        embeddings=embeddings,
                         metadatas=metadatas or [],
                     )
                     return await cast(
@@ -136,8 +147,11 @@ class CollectionImpl:
         )
 
     def _query(
-        self, query: str | None, query_embedding: list[float] | None,
-        top_k: int, where: dict[str, Any] | WhereClause | None
+        self,
+        top_k: int,
+        query_embedding: list[float] | None = None,
+        query: str | None = None,
+        where: dict[str, Any] | WhereClause | None = None
     ) -> QueryRes | Awaitable[QueryRes]:
         if query_embedding is None:
             if query is None or self.embedding_function is None:
@@ -147,12 +161,18 @@ class CollectionImpl:
                 )
             # TODO: set default embedding function
             if self.mode == "async":
-                async def _get_embeddings():
-                    embeddings = await self.embedding_function(query)  # type: ignore[misc]
+                async def _get_embeddings() -> QueryRes:
+                    embeddings = await self.embedding_function(query)
                     embeddings = embeddings[0]
 
-                    return QueryReqInput(
-                        query_embedding=embeddings, top_k=top_k, where=where
+                    return await cast(
+                        Awaitable[QueryRes],
+                        self._documents_api.query_documents(
+                            QueryReqInput(
+                                query_embedding=embeddings, top_k=top_k,
+                                where=cast(WhereClause | None, where)
+                            )
+                        )
                     )
 
                 return _get_embeddings()  # type: ignore[return-value]
@@ -165,9 +185,15 @@ class CollectionImpl:
             )
         )
 
-    def _peek(self, n: int = 5) -> list[Document]:
-        results: GetDocumentsRes = self._get_documents()  # type: ignore[assignment]
-        return results.documents[:n]
+    def _peek(self, n: int = 5) -> list[Document] | Awaitable[list[Document]]:
+        if self.mode == "async":
+            async def __peek() -> list[Document]:
+                results = await cast(Awaitable[GetDocumentsRes], self._get_documents())
+                return results.documents[:n]
+            return __peek()
+        else:
+            results = cast(GetDocumentsRes, self._get_documents())
+            return results.documents[:n]
 
 
 class SyncCollection(CollectionImpl):
@@ -200,42 +226,48 @@ class SyncCollection(CollectionImpl):
         embeddings: list[list[float]] | None,
         metadatas: list[dict[str, Any]],
         before_insert: Callable[[list[str]], list[str]] | None = None,
-    ) -> InsertDocumentsRes:
-        return cast(InsertDocumentsRes, self._add_documents(
+    ) -> None:
+        self._add_documents(
             ids, documents, embeddings, metadatas, before_insert
-        ))
+        )
 
-    def get_documents(self) -> GetDocumentsRes:
-        return cast(GetDocumentsRes, self._get_documents())
+    def get_documents(self) -> list[GetDocDict]:
+        documents = self._get_documents()
+        return [
+            doc.model_dump(exclude_unset=True) for doc in documents.documents
+        ]
 
     def update_documents(
         self,
         document_id: str,
         where: dict[str, Any],
         updates: dict[str, Any],
-    ) -> UpdateDocumentsRes:
-        return cast(UpdateDocumentsRes, self._update_document(
+    ) -> None:
+        self._update_document(
             document_id, where, updates
-        ))
+        )
 
     def delete_documents(
         self,
         document_ids: list[str],
-    ) -> DeleteDocumentsRes:
-        return cast(DeleteDocumentsRes, self._delete_documents(document_ids))
+    ) -> None:
+        self._delete_documents(document_ids)
 
     def query_documents(
         self,
-        query: str | None,
-        query_embedding: list[float] | None,
         top_k: int,
-        where: dict[str, Any] | WhereClause | None,
-    ) -> QueryRes:
+        query_embedding: list[float] | None = None,
+        query: str | None = None,
+        where: dict[str, Any] | WhereClause | None = None
+    ) -> list[QueryDocDict]:
         if isinstance(where, dict):
             where = WhereClause(**where)  # type: ignore[arg-type]
-        return cast(QueryRes, self._query(
-            query, query_embedding, top_k, where
+        query_res = cast(QueryRes, self._query(
+            top_k, query_embedding, query, where
         ))
+        return [
+            doc.model_dump() for doc in query_res.documents
+        ]
 
     def peek(self, n: int = 5) -> list[Document]:
         return self._peek(n)
@@ -271,40 +303,46 @@ class AsyncCollection(CollectionImpl):
         embeddings: list[list[float]] | None,
         metadatas: list[dict[str, Any]],
         before_insert: Callable[[list[str]], list[str]] | None = None,
-    ) -> InsertDocumentsRes:
-        return await cast(Awaitable[InsertDocumentsRes], self._add_documents(
+    ) -> None:
+        await cast(Awaitable[InsertDocumentsRes], self._add_documents(
             ids, documents, embeddings, metadatas, before_insert
         ))
 
-    async def get_documents(self) -> GetDocumentsRes:
-        return await cast(Awaitable[GetDocumentsRes], self._get_documents())
+    async def get_documents(self) -> list[GetDocDict]:
+        documents = await cast(Awaitable[GetDocumentsRes], self._get_documents())
+        return [
+            doc.model_dump(exclude_unset=True) for doc in documents.documents
+        ]
 
     async def update_documents(
         self,
         document_id: str,
         where: dict[str, Any],
         updates: dict[str, Any],
-    ) -> UpdateDocumentsRes:
-        return await cast(Awaitable[UpdateDocumentsRes], self._update_document(
+    ) -> None:
+        await cast(Awaitable[UpdateDocumentsRes], self._update_document(
             document_id, where, updates
         ))
 
     async def delete_documents(
         self,
         document_ids: list[str],
-    ) -> DeleteDocumentsRes:
-        return await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(document_ids))
+    ) -> None:
+        await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(document_ids))
 
     async def query_documents(
         self,
-        query: str | None,
-        query_embedding: list[float] | None,
         top_k: int,
-        where: dict[str, Any] | WhereClause | None,
-    ) -> QueryRes:
-        return await cast(Awaitable[QueryRes], self._query(
-            query, query_embedding, top_k, where
+        query_embedding: list[float] | None = None,
+        query: str | None = None,
+        where: dict[str, Any] | WhereClause | None = None
+    ) -> list[QueryDocDict]:
+        query_res = await cast(Awaitable[QueryRes], self._query(
+            top_k, query_embedding, query, where
         ))
+        return [
+            doc.model_dump() for doc in query_res.documents
+        ]
 
     async def peek(self, n: int = 5) -> list[Document]:
         return await cast(Awaitable[list[Document]], self._peek(n))

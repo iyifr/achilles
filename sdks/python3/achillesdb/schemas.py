@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
@@ -128,8 +129,8 @@ class Document(BaseModel):
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     # NOTE: distance is not available in a normal get_documents response
-    distance: float = Field(
-        description="Distance from query embedding", default=0.0
+    distance: float | None = Field(
+        description="Distance from query embedding", default=None
     )
 
 
@@ -180,9 +181,14 @@ class GetDocumentsRes(BaseModel):
     """
     GET /database/{database_name}/collections/{collection_name}/documents
     """
-    documents: list[Document]
+    documents: list[Document] | None
     doc_count: int
 
+    @model_validator(mode='after')
+    def normalize_documents(self) -> GetDocumentsRes:
+        if self.documents is None:
+            self.documents = []
+        return self
 
 class InsertDocumentsReq(BaseModel):
     """
@@ -211,6 +217,9 @@ class InsertDocumentReqInput(BaseModel):
         # validate embeddings is not empty
         if not self.embeddings:
             raise ValueError("Embeddings must be non-empty")
+
+        if any(not math.isfinite(v) for emb in self.embeddings for v in emb):
+            raise ValueError("Embeddings must not contain NaN or Inf values")
 
         # validate dimensions
         dim = len(self.embeddings[0])
@@ -333,9 +342,14 @@ class QueryRes(BaseModel):
     """
     POST /database/{database_name}/collections/{collection_name}/documents/query
     """
-    documents: list[Document]
+    documents: list[Document] | None
     doc_count: int
 
+    @model_validator(mode='after')
+    def normalize_documents(self) -> GetDocumentsRes:
+        if self.documents is None:
+            self.documents = []
+        return self
 
 # Comparison operators
 class ComparisonOp(BaseModel):
@@ -391,7 +405,6 @@ class WhereClause(BaseModel):
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
-            exclude_unset=True,
         )
 
 
