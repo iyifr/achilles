@@ -1,4 +1,6 @@
-from achillesdb.schemas import WhereClause
+from __future__ import annotations
+
+from achillesdb.schemas import Scalar, WhereClause
 
 
 class W:
@@ -15,35 +17,35 @@ class W:
     """
 
     @staticmethod
-    def eq(field: str, value) -> WhereClause:
+    def eq(field: str, value: Scalar) -> WhereClause:
         return WhereClause(**{field: value})
 
     @staticmethod
-    def gt(field: str, value: float) -> WhereClause:
+    def gt(field: str, value: int | float) -> WhereClause:
         return WhereClause(**{field: {"$gt": value}})
 
     @staticmethod
-    def gte(field: str, value: float) -> WhereClause:
+    def gte(field: str, value: int | float) -> WhereClause:
         return WhereClause(**{field: {"$gte": value}})
 
     @staticmethod
-    def lt(field: str, value: float) -> WhereClause:
+    def lt(field: str, value: int | float) -> WhereClause:
         return WhereClause(**{field: {"$lt": value}})
 
     @staticmethod
-    def lte(field: str, value: float) -> WhereClause:
+    def lte(field: str, value: int | float) -> WhereClause:
         return WhereClause(**{field: {"$lte": value}})
 
     @staticmethod
-    def ne(field: str, value) -> WhereClause:
+    def ne(field: str, value: Scalar) -> WhereClause:
         return WhereClause(**{field: {"$ne": value}})
 
     @staticmethod
-    def in_(field: str, values: list) -> WhereClause:
+    def in_(field: str, values: list[Scalar]) -> WhereClause:
         return WhereClause(**{field: {"$in": values}})
 
     @staticmethod
-    def arr_contains(field: str, values: list) -> WhereClause:
+    def arr_contains(field: str, values: list[Scalar]) -> WhereClause:
         return WhereClause(**{field: {"$arrContains": values}})
 
     @staticmethod

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Literal, Optional, Type, TypeVar
+from typing import Any, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -215,20 +215,20 @@ class _HTTPClient:
         self,
         method: str,
         path: str,
-        resType: Optional[type[ResModel]] = None,
+        resType: type[ResModel] | None = None,
         json: Any = None,
-        params: Optional[dict] = None,
-        headers: Optional[dict] = None,
-        timeout: Optional[float] = None,
-        expected_status: Optional[int] = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        expected_status: int | None = None,
         retry: bool = True,
-    ) -> Any:
+    ) -> ResModel:
         if self.mode == "async":
-            return self._request_async_with_retry(
+            return self._request_async_with_retry(  # type: ignore[return-value]
                 method, path, json=json, params=params,
                 headers=headers, timeout=timeout,
                 expected_status=expected_status, resType=resType
-            ) if retry else self._request_async(
+            ) if retry else self._request_async(  # type: ignore[return-value]
                 method, path, json=json, params=params,
                 headers=headers, timeout=timeout,
                 expected_status=expected_status, resType=resType
@@ -246,7 +246,6 @@ class _HTTPClient:
             expected_status=expected_status, resType=resType
         )
 
-
     async def _request_async_with_retry(self, method, path, **kwargs):
         return await with_retry_async(
             lambda: self._request_async(method, path, **kwargs),
@@ -257,13 +256,13 @@ class _HTTPClient:
         self,
         method: str,
         path: str,
-        resType: Optional[type[ResModel]] = None,
+        resType: type[ResModel] | None = None,
         json: Any = None,
-        params: Optional[dict] = None,
-        headers: Optional[dict] = None,
-        timeout: Optional[float] = None,
-        expected_status: Optional[int] = None,
-    ) -> Any:
+        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        expected_status: int | None = None,
+    ) -> ResModel:
         import requests as req_lib
 
         url = self._make_url(path)
@@ -295,13 +294,13 @@ class _HTTPClient:
         self,
         method: str,
         path: str,
-        resType: Optional[type[ResModel]] = None,
+        resType: type[ResModel] | None = None,
         json: Any = None,
-        params: Optional[dict] = None,
-        headers: Optional[dict] = None,
-        timeout: Optional[float] = None,
-        expected_status: Optional[int] = None,
-    ) -> Any:
+        params: dict[str, Any] | None = None,
+        headers: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        expected_status: int | None = None,
+    ) -> ResModel:
         import httpx
 
         merged_headers = {**self.default_headers, **(headers or {})}
@@ -338,7 +337,6 @@ class _HTTPClient:
             await self._async_client.aclose()
         else:
             raise ValueError("this is an async client session mathod and not sync")
-
 
 
 class SyncHttpClient(_HTTPClient):
@@ -448,7 +446,7 @@ class AsyncHttpClient(_HTTPClient):
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:
-        return await self.request(
+        return await self.request(  # type: ignore[misc]
             "GET", path, resType, params=params,
             expected_status=expected_status,
             retry=retry,
@@ -463,7 +461,7 @@ class AsyncHttpClient(_HTTPClient):
         expected_status: Optional[int] = None,
         retry: bool = False,
     ) -> ResModel:
-        return await self.request(
+        return await self.request(  # type: ignore[misc]
             "POST", path, resType, params=params,
             json=json, expected_status=expected_status,
             retry=retry,
@@ -478,7 +476,7 @@ class AsyncHttpClient(_HTTPClient):
         expected_status: Optional[int] = None,
         retry: bool = False,
     ) -> ResModel:
-        return await self.request(
+        return await self.request(  # type: ignore[misc]
             "PUT", path, resType, params=params,
             json=json, expected_status=expected_status,
             retry=retry,
@@ -493,7 +491,7 @@ class AsyncHttpClient(_HTTPClient):
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:
-        return await self.request(
+        return await self.request(  # type: ignore[misc]
             "PATCH", path, resType, params=params,
             json=json, expected_status=expected_status,
             retry=retry,
@@ -508,7 +506,7 @@ class AsyncHttpClient(_HTTPClient):
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:
-        return await self.request(
+        return await self.request(  # type: ignore[misc]
             "DELETE", path, resType, params=params,
             json=json, expected_status=expected_status,
             retry=retry,
@@ -522,7 +520,7 @@ class AsyncHttpClient(_HTTPClient):
         expected_status: Optional[int] = None,
         retry: bool = True,
     ) -> ResModel:
-        return await self.request(
+        return await self.request(  # type: ignore[misc]
             "HEAD", path, resType, params=params,
             expected_status=expected_status,
             retry=retry,

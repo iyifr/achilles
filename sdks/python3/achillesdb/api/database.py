@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from achillesdb.schemas import CreateDatabaseRes, GetDatabasesRes, MessageResponse
+from achillesdb.schemas import CreateDatabaseRes, DeleteDatabaseRes, GetDatabasesRes
 
 import logging
-from typing import Awaitable, Literal, Optional, Union
+from typing import Awaitable, Literal, cast
 
 from ..config import get_config
 from ..http.connection import SyncHttpClient, AsyncHttpClient
@@ -16,15 +16,15 @@ cfg = get_config()
 class _DatabaseApi:
     def __init__(
         self,
-        http_client: Union[SyncHttpClient, AsyncHttpClient],
-        logger: Optional[logging.Logger] = None,
+        http_client: SyncHttpClient | AsyncHttpClient,
+        logger: logging.Logger | None = None,
         mode: Literal["sync", "async"] = "sync",
     ):
         self._logger = logger or logging.getLogger(__name__)
         self._mode = mode
         self._http = http_client
 
-    def _create_database(self, name: str):
+    def _create_database(self, name: str) -> CreateDatabaseRes | Awaitable[CreateDatabaseRes]:
         validate_name(name, "Database name")
         return self._http.post(
             "/database",
@@ -40,11 +40,11 @@ class _DatabaseApi:
             expected_status=200,
         )
 
-    def _delete_database(self, name: str) -> MessageResponse:
+    def _delete_database(self, name: str) -> DeleteDatabaseRes | Awaitable[DeleteDatabaseRes]:
         validate_name(name, "Database name")
         return self._http.delete(
             f"/database/{name}",
-            MessageResponse,
+            DeleteDatabaseRes,
             expected_status=200,
         )
 
@@ -54,7 +54,7 @@ class SyncDatabaseApi(_DatabaseApi):
     def __init__(
         self,
         http_client: SyncHttpClient,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         super().__init__(
             http_client=http_client,
@@ -62,11 +62,11 @@ class SyncDatabaseApi(_DatabaseApi):
             mode="sync"
         )
 
-    def create_database(self, name: str):
-        return self._create_database(name)
+    def create_database(self, name: str) -> CreateDatabaseRes:
+        return cast(CreateDatabaseRes, self._create_database(name))
 
     def list_databases(self) -> GetDatabasesRes:
-        return self._list_databases()
+        return cast(GetDatabasesRes, self._list_databases())
 
     def delete_database(self, name: str) -> None:
         self._delete_database(name)
@@ -76,18 +76,18 @@ class AsyncDatabaseApi(_DatabaseApi):
 
     def __init__(
         self, http_client: AsyncHttpClient,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         super().__init__(
             http_client=http_client,
             logger=logger, mode="async"
         )
 
-    async def create_database(self, name: str):
-        return await self._create_database(name)
+    async def create_database(self, name: str) -> CreateDatabaseRes:
+        return await cast(Awaitable[CreateDatabaseRes], self._create_database(name))
 
-    async def list_databases(self):
-        return await self._list_databases()
+    async def list_databases(self) -> GetDatabasesRes:
+        return await cast(Awaitable[GetDatabasesRes], self._list_databases())
 
-    async def delete_database(self, name: str) -> None:
-        await self._delete_database(name)
+    async def delete_database(self, name: str) -> DeleteDatabaseRes:
+        return await cast(Awaitable[DeleteDatabaseRes], self._delete_database(name))

@@ -1,25 +1,33 @@
-import logging
-from typing import Any, Awaitable, Callable, List, Literal, Optional, Union, cast
+from __future__ import annotations
 
-import uuid
+import logging
+from typing import Any, Awaitable, Callable, Literal, cast
+
 
 from achillesdb.api.collection import AsyncCollectionApi, SyncCollectionApi
 from achillesdb.api.document import AsyncDocumentApi, SyncDocumentApi
 from achillesdb.errors import ERROR_VALIDATION, AchillesError
 from achillesdb.http.connection import AsyncHttpClient, SyncHttpClient
-from achillesdb.schemas import DeleteDocumentsReqInput, GetDocumentsRes, InsertDocumentReqInput, InsertDocumentsRes, QueryReqInput, UpdateDocumentsReqInput, WhereClause
+from achillesdb.schemas import (
+    DeleteDocumentsReqInput, DeleteDocumentsRes,
+    Document, GetCollectionRes, GetDocumentsRes,
+    InsertDocumentReqInput, InsertDocumentsRes,
+    QueryReqInput, QueryRes,
+    UpdateDocumentsReqInput, UpdateDocumentsRes,
+    WhereClause,
+)
 from achillesdb.types import EmbeddingFn
 
 
 class CollectionImpl:
     def __init__(
         self,
-        id,
+        id: str,
         name: str,
         database: str,
-        http_client: Union[SyncHttpClient, AsyncHttpClient],
-        embedding_function: Optional[EmbeddingFn] = None,
-        logger: Optional[logging.Logger] = None,
+        http_client: SyncHttpClient | AsyncHttpClient,
+        embedding_function: EmbeddingFn | None = None,
+        logger: logging.Logger | None = None,
         mode: Literal["sync", "async"] = "sync",
     ):
         self.id = id
@@ -31,39 +39,40 @@ class CollectionImpl:
         self.mode = mode
 
         if self.mode == "async":
-            self._documents_api = AsyncDocumentApi(
-                self._http_client, self.database, self.name, logger=self.logger
+            self._documents_api: AsyncDocumentApi | SyncDocumentApi = AsyncDocumentApi(
+                cast(AsyncHttpClient, self._http_client), self.database, self.name, logger=self.logger
             )
-            self._collection_api = AsyncCollectionApi(
-                self._http_client, database_name=self.database, logger=self.logger
+            self._collection_api: AsyncCollectionApi | SyncCollectionApi = AsyncCollectionApi(
+                cast(AsyncHttpClient, self._http_client), database_name=self.database, logger=self.logger
             )
         else:
             self._documents_api = SyncDocumentApi(
-                self._http_client, self.database, self.name, logger=self.logger
+                cast(SyncHttpClient, self._http_client), self.database, self.name, logger=self.logger
             )
             self._collection_api = SyncCollectionApi(
-                self._http_client, database_name=self.database, logger=self.logger
+                cast(SyncHttpClient, self._http_client), database_name=self.database, logger=self.logger
             )
 
-    def _count(self):
+    def _count(self) -> int | Awaitable[int]:
         if self.mode == "async":
-            async def _count():
-                result = await self._collection_api.get_collection(self.name)
+            async def _count() -> int:
+                result = await self._collection_api.get_collection(self.name)  # type: ignore[misc]
                 return result.stats.doc_count
             return _count()
         else:
-            return self._collection_api.get_collection(self.name).stats.doc_count
-
+            res = self._collection_api.get_collection(self.name)
+            assert isinstance(res, GetCollectionRes)
+            return res.stats.doc_count
 
     # TODO: implement doc embedding
     def _add_documents(
         self,
         ids: list[str],
         documents: list[str],
-        embeddings: Optional[list[list[float]]],
-        metadatas: Optional[list[dict[str, Any]]],
-        before_insert: Optional[Callable[[List[str]], List[str]]] = None,
-    ):
+        embeddings: list[list[float]] | None,
+        metadatas: list[dict[str, Any]] | None,
+        before_insert: Callable[[list[str]], list[str]] | None = None,
+    ) -> InsertDocumentsRes | Awaitable[InsertDocumentsRes]:
         # TODO: review error handling
         # TODO: implement doc embedding
         # FIX: API: the endpoint seems to be accepting duplicate ids
@@ -81,23 +90,23 @@ class CollectionImpl:
                         ids=ids,
                         documents=before_insert(documents) if before_insert else documents,
                         embeddings=await cast(Awaitable[list[list[float]]], _embeddings),
-                        metadatas=metadatas,
+                        metadatas=metadatas or [],
                     )
                     return await cast(
                         Awaitable[InsertDocumentsRes],
                         self._documents_api.insert_documents(docs_data)
                     )
-                return _get_docs()
+                return _get_docs()  # type: ignore[return-value]
             embeddings = cast(list[list[float]], _embeddings)
         docs_data = InsertDocumentReqInput(
             ids=ids,
             documents=before_insert(documents) if before_insert else documents,
             embeddings=embeddings,
-            metadatas=metadatas,
+            metadatas=metadatas or [],
         )
         return self._documents_api.insert_documents(docs_data)
 
-    def _get_documents(self):
+    def _get_documents(self) -> GetDocumentsRes | Awaitable[GetDocumentsRes]:
         return self._documents_api.get_documents()
 
     def _update_document(
@@ -105,7 +114,7 @@ class CollectionImpl:
         document_id: str,
         where: dict[str, Any],
         updates: dict[str, Any],
-    ):
+    ) -> UpdateDocumentsRes | Awaitable[UpdateDocumentsRes]:
         return self._documents_api.update_documents(
             UpdateDocumentsReqInput(
                 document_id=document_id,
@@ -117,7 +126,7 @@ class CollectionImpl:
     def _delete_documents(
         self,
         document_ids: list[str],
-    ):
+    ) -> DeleteDocumentsRes | Awaitable[DeleteDocumentsRes]:
         # TODO: API: implement partial delete handling: need to return deleted ids
         # and maybe retry deleting the rest of the ids
         return self._documents_api.delete_documents(
@@ -127,9 +136,9 @@ class CollectionImpl:
         )
 
     def _query(
-        self, query: Optional[str], query_embedding: Optional[List[float]],
-        top_k: int, where: dict
-    ):
+        self, query: str | None, query_embedding: list[float] | None,
+        top_k: int, where: dict[str, Any] | WhereClause | None
+    ) -> QueryRes | Awaitable[QueryRes]:
         if query_embedding is None:
             if query is None or self.embedding_function is None:
                 raise AchillesError(
@@ -139,36 +148,37 @@ class CollectionImpl:
             # TODO: set default embedding function
             if self.mode == "async":
                 async def _get_embeddings():
-                    embeddings = await self.embedding_function(query)
+                    embeddings = await self.embedding_function(query)  # type: ignore[misc]
                     embeddings = embeddings[0]
 
                     return QueryReqInput(
                         query_embedding=embeddings, top_k=top_k, where=where
                     )
 
-                return _get_embeddings()
+                return _get_embeddings()  # type: ignore[return-value]
             else:
-                query_embedding = self.embedding_function([query])[0]
+                query_embedding = self.embedding_function([query])[0]  # type: ignore[index]
         return self._documents_api.query_documents(
             QueryReqInput(
-                query_embedding=query_embedding, top_k=top_k, where=where
+                query_embedding=query_embedding, top_k=top_k,
+                where=cast(WhereClause | None, where)
             )
         )
 
-    def _peek(self, n: int = 5):
-        results: GetDocumentsRes = self._get_documents()
+    def _peek(self, n: int = 5) -> list[Document]:
+        results: GetDocumentsRes = self._get_documents()  # type: ignore[assignment]
         return results.documents[:n]
 
 
 class SyncCollection(CollectionImpl):
     def __init__(
         self,
-        id,
+        id: str,
         name: str,
         database: str,
-        http_client: Union[SyncHttpClient, AsyncHttpClient],
-        embedding_function: Optional[Callable] = None,
-        logger: Optional[logging.Logger] = None,
+        http_client: SyncHttpClient | AsyncHttpClient,
+        embedding_function: EmbeddingFn | None = None,
+        logger: logging.Logger | None = None,
     ):
         super().__init__(
             id=id,
@@ -180,68 +190,66 @@ class SyncCollection(CollectionImpl):
             mode="sync",
         )
 
-    def count(self):
-        return self._count()
+    def count(self) -> int:
+        return cast(int, self._count())
 
     def add_documents(
         self,
         ids: list[str],
         documents: list[str],
-        embeddings: Optional[list[list[float]]],
+        embeddings: list[list[float]] | None,
         metadatas: list[dict[str, Any]],
-        before_insert: Optional[Callable[[List[str]], List[str]]] = None,
-    ):
-        return self._add_documents(
+        before_insert: Callable[[list[str]], list[str]] | None = None,
+    ) -> InsertDocumentsRes:
+        return cast(InsertDocumentsRes, self._add_documents(
             ids, documents, embeddings, metadatas, before_insert
-        )
+        ))
 
-    def get_documents(self):
-        return self._get_documents()
+    def get_documents(self) -> GetDocumentsRes:
+        return cast(GetDocumentsRes, self._get_documents())
 
     def update_documents(
         self,
         document_id: str,
         where: dict[str, Any],
         updates: dict[str, Any],
-    ):
-        return self._update_document(
+    ) -> UpdateDocumentsRes:
+        return cast(UpdateDocumentsRes, self._update_document(
             document_id, where, updates
-        )
+        ))
 
     def delete_documents(
         self,
         document_ids: list[str],
-    ):
-        return self._delete_documents(
-            document_ids
-        )
+    ) -> DeleteDocumentsRes:
+        return cast(DeleteDocumentsRes, self._delete_documents(document_ids))
 
     def query_documents(
         self,
-        query: str,
-        query_embedding: Optional[List[float]],
+        query: str | None,
+        query_embedding: list[float] | None,
         top_k: int,
-        where: Optional[Union[dict[str, Any], WhereClause]],
-    ):
+        where: dict[str, Any] | WhereClause | None,
+    ) -> QueryRes:
         if isinstance(where, dict):
-            where = WhereClause(**where)
-        return self._query(
+            where = WhereClause(**where)  # type: ignore[arg-type]
+        return cast(QueryRes, self._query(
             query, query_embedding, top_k, where
-        )
+        ))
 
-    def peek(self, n: int = 5):
+    def peek(self, n: int = 5) -> list[Document]:
         return self._peek(n)
 
 
 class AsyncCollection(CollectionImpl):
     def __init__(
         self,
-        id,
+        id: str,
         name: str,
         database: str,
-        http_client: Union[SyncHttpClient, AsyncHttpClient],
-        embedding_function: Optional[Callable] = None,
-        logger: Optional[logging.Logger] = None,
+        http_client: SyncHttpClient | AsyncHttpClient,
+        embedding_function: EmbeddingFn | None = None,
+        logger: logging.Logger | None = None,
     ):
         super().__init__(
             id=id,
@@ -252,52 +260,51 @@ class AsyncCollection(CollectionImpl):
             logger=logger,
             mode="async",
         )
-    async def count(self):
-        return await self._count()
+
+    async def count(self) -> int:
+        return await cast(Awaitable[int], self._count())
 
     async def add_documents(
         self,
         ids: list[str],
         documents: list[str],
-        embeddings: Optional[list[list[float]]],
+        embeddings: list[list[float]] | None,
         metadatas: list[dict[str, Any]],
-        before_insert: Optional[Callable[[List[str]], List[str]]] = None,
-    ):
-        return await self._add_documents(
+        before_insert: Callable[[list[str]], list[str]] | None = None,
+    ) -> InsertDocumentsRes:
+        return await cast(Awaitable[InsertDocumentsRes], self._add_documents(
             ids, documents, embeddings, metadatas, before_insert
-        )
+        ))
 
-    async def get_documents(self):
-        return await self._get_documents()
+    async def get_documents(self) -> GetDocumentsRes:
+        return await cast(Awaitable[GetDocumentsRes], self._get_documents())
 
     async def update_documents(
         self,
         document_id: str,
         where: dict[str, Any],
         updates: dict[str, Any],
-    ):
-        return await self._update_document(
+    ) -> UpdateDocumentsRes:
+        return await cast(Awaitable[UpdateDocumentsRes], self._update_document(
             document_id, where, updates
-        )
+        ))
 
     async def delete_documents(
         self,
         document_ids: list[str],
-    ):
-        return await self._delete_documents(
-            document_ids
-        )
+    ) -> DeleteDocumentsRes:
+        return await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(document_ids))
 
     async def query_documents(
         self,
-        query: str,
-        query_embedding: Optional[List[float]],
+        query: str | None,
+        query_embedding: list[float] | None,
         top_k: int,
-        where: dict[str, Any],
-    ):
-        return await self._query(
+        where: dict[str, Any] | WhereClause | None,
+    ) -> QueryRes:
+        return await cast(Awaitable[QueryRes], self._query(
             query, query_embedding, top_k, where
-        )
+        ))
 
-    async def peek(self, n: int = 5):
-        return await self._peek(n)
+    async def peek(self, n: int = 5) -> list[Document]:
+        return await cast(Awaitable[list[Document]], self._peek(n))

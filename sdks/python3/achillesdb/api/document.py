@@ -1,15 +1,22 @@
+from __future__ import annotations
+
 import logging
-from typing import Literal, Optional, Union
+from typing import Awaitable, Literal, Optional, cast
 
 from achillesdb.http.connection import AsyncHttpClient, SyncHttpClient
-from achillesdb.schemas import DeleteDocumentsReqInput, DeleteDocumentsRes, GetDocumentsRes, InsertDocumentReqInput, InsertDocumentsRes, QueryReqInput, QueryRes, UpdateDocumentsReqInput, UpdateDocumentsRes
-from achillesdb.validators import validate_name
+from achillesdb.schemas import (
+    DeleteDocumentsReqInput, DeleteDocumentsRes,
+    GetDocumentsRes,
+    InsertDocumentReqInput, InsertDocumentsRes,
+    QueryReqInput, QueryRes,
+    UpdateDocumentsReqInput, UpdateDocumentsRes,
+)
 
 
 class _DocumentApiBase:
     def __init__(
         self,
-        http_client: Union[SyncHttpClient, AsyncHttpClient],
+        http_client: SyncHttpClient | AsyncHttpClient,
         database_name: str,
         collection_name: str,
         logger: Optional[logging.Logger] = None,
@@ -21,14 +28,14 @@ class _DocumentApiBase:
         self._database_name = database_name
         self._collection_name = collection_name
 
-    def _get_documents(self):
+    def _get_documents(self) -> GetDocumentsRes | Awaitable[GetDocumentsRes]:
         return self._http.get(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             GetDocumentsRes,
             expected_status=200,
         )
 
-    def _insert_documents(self, input: InsertDocumentReqInput):
+    def _insert_documents(self, input: InsertDocumentReqInput) -> InsertDocumentsRes | Awaitable[InsertDocumentsRes]:
         return self._http.post(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             InsertDocumentsRes,
@@ -36,7 +43,7 @@ class _DocumentApiBase:
             expected_status=200,
         )
 
-    def _update_documents(self, input: UpdateDocumentsReqInput):
+    def _update_documents(self, input: UpdateDocumentsReqInput) -> UpdateDocumentsRes | Awaitable[UpdateDocumentsRes]:
         return self._http.put(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             UpdateDocumentsRes,
@@ -44,7 +51,7 @@ class _DocumentApiBase:
             expected_status=200,
         )
 
-    def _delete_documents(self, input: DeleteDocumentsReqInput):
+    def _delete_documents(self, input: DeleteDocumentsReqInput) -> DeleteDocumentsRes | Awaitable[DeleteDocumentsRes]:
         return self._http.delete(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents",
             DeleteDocumentsRes,
@@ -52,7 +59,7 @@ class _DocumentApiBase:
             expected_status=200,
         )
 
-    def _query_documents(self, input: QueryReqInput):
+    def _query_documents(self, input: QueryReqInput) -> QueryRes | Awaitable[QueryRes]:
         return self._http.post(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents/query",
             QueryRes,
@@ -77,20 +84,20 @@ class SyncDocumentApi(_DocumentApiBase):
             mode="sync",
         )
 
-    def get_documents(self):
-        return self._get_documents()
+    def get_documents(self) -> GetDocumentsRes:
+        return cast(GetDocumentsRes, self._get_documents())
 
-    def insert_documents(self, input: InsertDocumentReqInput):
-        return self._insert_documents(input)
+    def insert_documents(self, input: InsertDocumentReqInput) -> InsertDocumentsRes:
+        return cast(InsertDocumentsRes, self._insert_documents(input))
 
-    def update_documents(self, input: UpdateDocumentsReqInput):
-        return self._update_documents(input)
+    def update_documents(self, input: UpdateDocumentsReqInput) -> UpdateDocumentsRes:
+        return cast(UpdateDocumentsRes, self._update_documents(input))
 
-    def delete_documents(self, input: DeleteDocumentsReqInput):
-        return self._delete_documents(input)
+    def delete_documents(self, input: DeleteDocumentsReqInput) -> DeleteDocumentsRes:
+        return cast(DeleteDocumentsRes, self._delete_documents(input))
 
-    def query_documents(self, input: QueryReqInput):
-        return self._query_documents(input)
+    def query_documents(self, input: QueryReqInput) -> QueryRes:
+        return cast(QueryRes, self._query_documents(input))
 
 
 class AsyncDocumentApi(_DocumentApiBase):
@@ -109,17 +116,17 @@ class AsyncDocumentApi(_DocumentApiBase):
             mode="async",
         )
 
-    async def get_documents(self):
-        return await self._get_documents()
+    async def get_documents(self) -> GetDocumentsRes:
+        return await cast(Awaitable[GetDocumentsRes], self._get_documents())
 
-    async def insert_documents(self, input: InsertDocumentReqInput):
-        return await self._insert_documents(input)
+    async def insert_documents(self, input: InsertDocumentReqInput) -> InsertDocumentsRes:
+        return await cast(Awaitable[InsertDocumentsRes], self._insert_documents(input))
 
-    async def update_documents(self, input: UpdateDocumentsReqInput):
-        return await self._update_documents(input)
+    async def update_documents(self, input: UpdateDocumentsReqInput) -> UpdateDocumentsRes:
+        return await cast(Awaitable[UpdateDocumentsRes], self._update_documents(input))
 
-    async def delete_documents(self, input: DeleteDocumentsReqInput):
-        return await self._delete_documents(input)
+    async def delete_documents(self, input: DeleteDocumentsReqInput) -> DeleteDocumentsRes:
+        return await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(input))
 
-    async def query_documents(self, input: QueryReqInput):
-        return await self._query_documents(input)
+    async def query_documents(self, input: QueryReqInput) -> QueryRes:
+        return await cast(Awaitable[QueryRes], self._query_documents(input))

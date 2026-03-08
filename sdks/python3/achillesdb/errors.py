@@ -1,4 +1,6 @@
-from typing import Optional
+from __future__ import annotations
+
+from typing import Any
 
 
 class AchillesError(Exception):
@@ -8,9 +10,9 @@ class AchillesError(Exception):
         self,
         message: str,
         code: str,
-        status_code: Optional[int] = None,
-        details: Optional[dict] = None,
-        retry_after: Optional[float] = None,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+        retry_after: float | None = None,
     ):
         self.code = code
         self.status_code = status_code

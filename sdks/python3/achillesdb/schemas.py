@@ -1,18 +1,22 @@
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field, RootModel, model_validator
+from typing import Any
+from pydantic import BaseModel, Field, model_validator
 
 from achillesdb.validators import validate_equal_lengths
 
 
-Scalar = Union[str, int, float, bool]
+Scalar = str | int | float | bool
 
 
 class ErrorResponse(BaseModel):
     error: str = ""
 
+
 class MessageResponse(BaseModel):
     message: str = Field(description="Success message")
+
 
 class CreateDatabaseReq(BaseModel):
     """
@@ -46,7 +50,7 @@ class GetDatabasesRes(BaseModel):
     """
     GET /databases
     """
-    databases: List[DatabaseInfo]
+    databases: list[DatabaseInfo]
     db_count: int = Field(description="Total number of databases")
 
 
@@ -89,11 +93,11 @@ class GetCollectionsRes(BaseModel):
     GET /database/{database_name}/collections
     """
     # FIX: API: endpoint returns None if no collections instead of empty list
-    collections: Optional[list[CollectionCatalogEntry]]
+    collections: list[CollectionCatalogEntry] | None
     collection_count: int
 
     @model_validator(mode='after')
-    def normalize_collections(self) -> 'GetCollectionsRes':
+    def normalize_collections(self) -> GetCollectionsRes:
         if self.collections is None:
             self.collections = []
         return self
@@ -122,7 +126,7 @@ class CollectionStats(BaseModel):
 class Document(BaseModel):
     id: str
     content: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     # NOTE: distance is not available in a normal get_documents response
     distance: float = Field(
         description="Distance from query embedding", default=0.0
@@ -176,7 +180,7 @@ class GetDocumentsRes(BaseModel):
     """
     GET /database/{database_name}/collections/{collection_name}/documents
     """
-    documents: List[Document]
+    documents: list[Document]
     doc_count: int
 
 
@@ -196,14 +200,14 @@ class InsertDocumentReqInput(BaseModel):
     """
     ids: list[str] = Field(description="Unique document ID")
     documents: list[str] = Field(description="Document content/text")
-    embeddings: list[List[float]] = Field(description="Document embedding vector")
-    metadatas: list[Dict[str, Any]] = Field(
+    embeddings: list[list[float]] = Field(description="Document embedding vector")
+    metadatas: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Arbitrary metadata key-value pairs"
     )
 
     @model_validator(mode='after')
-    def check_validations(self) -> 'InsertDocumentReqInput':
+    def check_validations(self) -> InsertDocumentReqInput:
         # validate embeddings is not empty
         if not self.embeddings:
             raise ValueError("Embeddings must be non-empty")
@@ -257,10 +261,8 @@ class UpdateDocumentsReqInput(BaseModel):
     payload: UpdateDocumentsReqInput
     """
     document_id: str = Field(description="ID of the document to update")
-    where: Dict[str, Any] = Field(default={}, description="Filter conditions (reserved for future use)")
-    updates: Dict[str, Any] = Field(description="Metadata fields to update")
-
-
+    where: dict[str, Any] = Field(default={}, description="Filter conditions (reserved for future use)")
+    updates: dict[str, Any] = Field(description="Metadata fields to update")
 
 
 class UpdateDocumentsRes(MessageResponse):
@@ -284,7 +286,7 @@ class DeleteDocumentsReqInput(BaseModel):
     DELETE /database/{database_name}/collections/{collection_name}/documents
     payload: DeleteDocumentsReqInput
     """
-    document_ids: List[str] = Field(description="List of document IDs to delete")
+    document_ids: list[str] = Field(description="List of document IDs to delete")
 
 
 class DeleteDocumentsRes(MessageResponse):
@@ -308,11 +310,11 @@ class QueryReqInput(BaseModel):
     POST /database/{database_name}/collections/{collection_name}/documents/query
     payload: QueryReqInput
     """
-    query_embedding: List[float] = Field(description="Query embedding vector")
+    query_embedding: list[float] = Field(description="Query embedding vector")
     top_k: int = Field(default=10, description="Number of results to return")
-    where: Optional['WhereClause'] = Field(default=None, description="Metadata filter conditions")
+    where: WhereClause | None = Field(default=None, description="Metadata filter conditions")
 
-    def model_dump(self, **kwargs):
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
         # serializes with aliases convert W.eq("category", "tech") to {"category": "tech"}
         d = super().model_dump(**kwargs)
         if self.where is not None:
@@ -320,7 +322,7 @@ class QueryReqInput(BaseModel):
         return d
 
     @model_validator(mode='after')
-    def check_validations(self) -> 'QueryReqInput':
+    def check_validations(self) -> QueryReqInput:
         # validate embeddings is not empty
         if not self.query_embedding:
             raise ValueError("Embeddings must be non-empty")
@@ -331,27 +333,24 @@ class QueryRes(BaseModel):
     """
     POST /database/{database_name}/collections/{collection_name}/documents/query
     """
-    documents: List[Document]
+    documents: list[Document]
     doc_count: int
-
-
-
 
 
 # Comparison operators
 class ComparisonOp(BaseModel):
     # greater than
-    gt:  Optional[Union[int, float]] = Field(None, alias="$gt")
+    gt: int | float | None = Field(None, alias="$gt")
     # greater than or equal
-    gte: Optional[Union[int, float]] = Field(None, alias="$gte")
+    gte: int | float | None = Field(None, alias="$gte")
     # less than
-    lt:  Optional[Union[int, float]] = Field(None, alias="$lt")
+    lt: int | float | None = Field(None, alias="$lt")
     # less than or equal
-    lte: Optional[Union[int, float]] = Field(None, alias="$lte")
+    lte: int | float | None = Field(None, alias="$lte")
     # not equal
-    eq:  Optional[Scalar] = Field(None, alias="$eq")
+    eq: Scalar | None = Field(None, alias="$eq")
     # not equal
-    ne:  Optional[Scalar] = Field(None, alias="$ne")
+    ne: Scalar | None = Field(None, alias="$ne")
 
     model_config = {"populate_by_name": True}
 
@@ -361,6 +360,7 @@ class ComparisonOp(BaseModel):
                     self.eq, self.ne]):
             raise ValueError("ComparisonOp must have at least one operator")
         return self
+
 
 # $in operator
 class InOp(BaseModel):
@@ -375,19 +375,19 @@ class ArrContainsOp(BaseModel):
 
 
 # A field value is either a scalar (equality shorthand) or an operator object
-FieldValue = Union[Scalar, ComparisonOp, InOp, ArrContainsOp]
+FieldValue = Scalar | ComparisonOp | InOp | ArrContainsOp
 
 
 class WhereClause(BaseModel):
     model_config = {"populate_by_name": True, "extra": "allow"}
 
-    and_: Optional[list["WhereClause"]] = Field(None, alias="$and")
-    or_:  Optional[list["WhereClause"]] = Field(None, alias="$or")
+    and_: list[WhereClause] | None = Field(None, alias="$and")
+    or_: list[WhereClause] | None = Field(None, alias="$or")
 
     # extra fields are the user's metadata field conditions
     # e.g. {"category": "tech", "year": {"$gt": 2022}}
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return self.model_dump(
             by_alias=True,
             exclude_none=True,
