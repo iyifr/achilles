@@ -1,0 +1,2 @@
+- make sure the sdk response model, is at least a subset of the coresponding opeanpi spec
+- i migth need a transformer that transform one or two normal response model to a convinient final model
