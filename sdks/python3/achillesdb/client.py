@@ -75,7 +75,7 @@ class _AchillesClient:
                 )
             return self._db_cache[name]
 
-    def _ping(self) -> bool:
+    def _ping(self) -> bool | Awaitable[bool]:
         if self._mode == "async":
             async def __ping() -> bool:
                 try:

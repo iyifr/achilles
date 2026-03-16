@@ -60,14 +60,10 @@ class _DocumentApiBase:
         )
 
     def _query_documents(self, input: QueryReqInput) -> QueryRes | Awaitable[QueryRes]:
-        payload = input.model_dump(exclude_unset=True)
-        self._logger.debug("Query payload: %s", payload)
-        # For manual debugging if logger is at INFO
-        # print(f"DEBUG: Query payload: {payload}")
         return self._http.post(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents/query",
             QueryRes,
-            json=payload,
+            json=input.model_dump(exclude_unset=True),
             expected_status=200,
         )
 

@@ -10,6 +10,7 @@ from .retry import with_retry, with_retry_async
 from ..schemas import ErrorResponse
 
 from ..config import ConnectionConfig, get_config
+from ..version import __version__
 from ..errors import (
     AchillesError,
     ERROR_CONNECTION,
@@ -85,23 +86,14 @@ def _parse_response(
     details: dict = {}
 
     try:
-        details = response.json()
-        message = ErrorResponse.model_validate(response.content).error
+        error_body = response.json()
+        message = error_body.get("error") or error_body.get("message") or message
+        details = error_body
     except Exception:
         try:
             message = response.text or message
         except Exception:
             pass
-
-    # try:
-    #     error_body = response.json()
-    #     message = error_body.get("error") or error_body.get("message") or message
-    #     details = error_body
-    # except Exception:
-    #     try:
-    #         message = response.text or message
-    #     except Exception:
-    #         pass
     try:
         retry_after_raw = response.headers.get("Retry-After")
         retry_after = float(retry_after_raw) if retry_after_raw is not None else None
@@ -164,7 +156,7 @@ class _HTTPClient:
         self.default_headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "achillesdb-python-sdk/0.1",  # NOTE: this is a placeholder version
+            "User-Agent": f"achillesdb-python-sdk/{__version__}",
         }
 
         if self.mode == "async":

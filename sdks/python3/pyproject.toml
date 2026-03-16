@@ -15,6 +15,11 @@ dependencies = [
 dev = [
     "mypy>=1.19.1",
     "flake8>=7.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "pytest-cov>=7.0.0",
+    "PyYAML>=6.0",
 ]
 
 [tool.mypy]
@@ -28,3 +33,16 @@ ignore_missing_imports = true
 warn_return_any = true
 warn_unused_ignores = false   # flip to true once errors are zero
 warn_redundant_casts = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--tb=short -v"
+filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
+markers = [
+    "unit: unit tests — no server required, always run",
+    "integration: integration tests — require a running AchillesDB server",
+]

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from typing import Any, Awaitable, Callable, Literal, cast
 
 from achillesdb.api.collection import AsyncCollectionApi, SyncCollectionApi
@@ -33,7 +32,6 @@ class DatabaseImpl:
         self._embedding_function = embedding_function
         self._logger = logger
         self._collections = None
-        self._collections_mutex = threading.Lock()
         self._mode = mode
 
         if mode == "async":
@@ -207,7 +205,6 @@ class AsyncDatabase(DatabaseImpl):
     async def delete_collection(self, name: str) -> DeleteCollectionRes:
         await cast(Awaitable[DeleteCollectionRes], self._delete_collection(name))
 
-    # TODO: implement quering from multiple collections at once
     # NOTE: API: no direct endpoint to handle this
     async def query_collections(
         self,
@@ -273,7 +270,6 @@ class SyncDatabase(DatabaseImpl):
     def delete_collection(self, name: str) -> None:
         cast(DeleteCollectionRes, self._delete_collection(name))
 
-    # TODO: implement quering from multiple collections at once
     def query_collections(
         self,
         collection_names: list[str],

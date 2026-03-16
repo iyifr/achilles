@@ -215,19 +215,20 @@ class InsertDocumentReqInput(BaseModel):
     @model_validator(mode='after')
     def check_validations(self) -> InsertDocumentReqInput:
         # validate embeddings is not empty
-        if not self.embeddings:
+        if not self.embeddings and len(self.ids) > 0:
             raise ValueError("Embeddings must be non-empty")
 
         if any(not math.isfinite(v) for emb in self.embeddings for v in emb):
             raise ValueError("Embeddings must not contain NaN or Inf values")
 
         # validate dimensions
-        dim = len(self.embeddings[0])
-        for i, emb in enumerate(self.embeddings[1:], 1):
-            if len(emb) != dim:
-                raise ValueError(
-                    f"Embedding dimension mismatch: expected {dim}, got {len(emb)} at index {i}"
-                )
+        if self.embeddings:
+            dim = len(self.embeddings[0])
+            for i, emb in enumerate(self.embeddings[1:], 1):
+                if len(emb) != dim:
+                    raise ValueError(
+                        f"Embedding dimension mismatch: expected {dim}, got {len(emb)} at index {i}"
+                    )
 
         # validate no duplicates in ids
         if len(self.ids) != len(set(self.ids)):
@@ -370,8 +371,8 @@ class ComparisonOp(BaseModel):
 
     @model_validator(mode="after")
     def at_least_one(self):
-        if not any([self.gt, self.gte, self.lt, self.lte,
-                    self.eq, self.ne]):
+        vals = [self.gt, self.gte, self.lt, self.lte, self.eq, self.ne]
+        if not any(v is not None for v in vals):
             raise ValueError("ComparisonOp must have at least one operator")
         return self
 

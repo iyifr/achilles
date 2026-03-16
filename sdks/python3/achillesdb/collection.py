@@ -76,8 +76,8 @@ class CollectionImpl:
         self,
         ids: list[str],
         documents: list[str],
-        embeddings: list[list[float]] | None,
-        metadatas: list[dict[str, Any]] | None,
+        embeddings: list[list[float]] | None = None,
+        metadatas: list[dict[str, Any]] | None = None,
         before_insert: Callable[[list[str]], list[str]] | None = None,
     ) -> InsertDocumentsRes | Awaitable[InsertDocumentsRes]:
         # TODO: review error handling
@@ -101,7 +101,7 @@ class CollectionImpl:
                         ids=ids,
                         documents=before_insert(documents) if before_insert else documents,
                         embeddings=embeddings,
-                        metadatas=metadatas or [],
+                        metadatas=metadatas if metadatas is not None else [{} for _ in range(len(ids))],
                     )
                     return await cast(
                         Awaitable[InsertDocumentsRes],
@@ -113,7 +113,7 @@ class CollectionImpl:
             ids=ids,
             documents=before_insert(documents) if before_insert else documents,
             embeddings=embeddings,
-            metadatas=metadatas or [],
+            metadatas=metadatas if metadatas is not None else [{} for _ in range(len(ids))],
         )
         return self._documents_api.insert_documents(docs_data)
 
@@ -162,7 +162,9 @@ class CollectionImpl:
             # TODO: set default embedding function
             if self.mode == "async":
                 async def _get_embeddings() -> QueryRes:
-                    embeddings = await self.embedding_function(query)
+                    embeddings = self.embedding_function([query])
+                    if inspect.isawaitable(embeddings):
+                        embeddings = await embeddings
                     embeddings = embeddings[0]
 
                     return await cast(
@@ -223,8 +225,8 @@ class SyncCollection(CollectionImpl):
         self,
         ids: list[str],
         documents: list[str],
-        embeddings: list[list[float]] | None,
-        metadatas: list[dict[str, Any]],
+        embeddings: list[list[float]] | None = None,
+        metadatas: list[dict[str, Any]] | None = None,
         before_insert: Callable[[list[str]], list[str]] | None = None,
     ) -> None:
         self._add_documents(
@@ -300,8 +302,8 @@ class AsyncCollection(CollectionImpl):
         self,
         ids: list[str],
         documents: list[str],
-        embeddings: list[list[float]] | None,
-        metadatas: list[dict[str, Any]],
+        embeddings: list[list[float]] | None = None,
+        metadatas: list[dict[str, Any]] | None = None,
         before_insert: Callable[[list[str]], list[str]] | None = None,
     ) -> None:
         await cast(Awaitable[InsertDocumentsRes], self._add_documents(
