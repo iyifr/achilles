@@ -42,6 +42,7 @@ const client = new AchillesClient({
   defaultDb: "mydb",           // optional — used when db not specified
   embeddingFunction: async (texts: string[]) => number[][], // optional
   timeout: 30000,              // default: 30000ms
+  maxRetries: 3,               // default: 3 — only for idempotent requests
   logger: console,             // optional — any object with .debug(), .info(), .warn(), .error()
 });
 ```
@@ -57,6 +58,7 @@ client = AchillesClient(
     default_db="mydb",             # optional
     embedding_function=my_embed,   # optional: Callable[[list[str]], list[list[float]]]
     timeout=30,                    # default: 30 seconds
+    max_retries=3,                 # default: 3 — only for idempotent requests
     logger=logging.getLogger(),    # optional: standard logging.Logger
 )
 ```
@@ -72,6 +74,7 @@ client = AsyncAchillesClient(
     default_db="mydb",
     embedding_function=my_async_embed,  # async Callable[[list[str]], list[list[float]]]
     timeout=30,
+    max_retries=3,
     logger=logging.getLogger(),
 )
 ```
@@ -85,6 +88,7 @@ client = AsyncAchillesClient(
 | `defaultDb`         | `undefined` / `None`   | If unset, `db` param required on methods  |
 | `embeddingFunction` | `undefined` / `None`   | Required for text-based query if no queryEmbedding provided |
 | `timeout`           | `30000` ms / `30` sec  | Applies to all HTTP requests              |
+| `maxRetries`        | `3`                    | Only idempotent requests (GET, HEAD, DELETE, OPTIONS) retry |
 | `logger`            | `undefined` / `None`   | No logging if unset                       |
 
 ### Connection Validation
@@ -169,8 +173,13 @@ class AchillesError(Exception):
 
 ### Retry Policy
 
-- **No automatic retries.** All errors fail immediately.
-- Users handle retry logic externally.
+Idempotent requests (GET, HEAD, DELETE, OPTIONS) retry automatically. Mutating requests (POST, PUT) never retry.
+
+- **Max attempts**: 3 (configurable via `maxRetries` / `max_retries` on client init)
+- **Backoff**: exponential with jitter — `random(0, min(0.5 * 2^(attempt-1), 30))` seconds
+- **Retry-After**: if the server sends a `Retry-After` header, that value is used instead of calculated backoff
+- **Retryable conditions**: connection errors, HTTP 429 (rate limit), 502, 503, 504 (server errors)
+- All other errors fail immediately
 
 ---
 
