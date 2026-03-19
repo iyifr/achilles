@@ -410,8 +410,19 @@ func (s *GDBService) DeleteCollection(collection_name string) error {
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
-	// Delete vector index file
+	// Drop the WiredTiger table
+	if err := kv.DeleteTable(collection.TableUri); err != nil {
+		if !IsNotFoundError(err) && !IsBusyError(err) {
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_collection_drop_table_error", "collection", collection_name, "database", s.Name, "table_uri", collection.TableUri, "error", err)
+			}
+			return Storage_Err(Wrap_Err(err, "failed to drop collection table %s", collection.TableUri))
+		}
+	}
+
+	// Evict the FAISS index from the cache
 	if collection.VectorIndexUri != "" {
+		faiss.GlobalIndexCache().Remove(collection.VectorIndexUri)
 		os.Remove(collection.VectorIndexUri)
 	}
 
@@ -1046,7 +1057,6 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		close(resultChan)
 	}()
 
-	// Use slices instead of map to avoid hashing overhead
 	resultSlice := make([]GlowstickQueryResultSet, len(ids))
 	present := make([]bool, len(ids))
 	for result := range resultChan {
@@ -1203,7 +1213,7 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 	}
 	for key, value := range payload.Updates {
 		if doc.Metadata == nil {
-			doc.Metadata = make(map[string]interface{})
+			doc.Metadata = make(map[string]any)
 		}
 		doc.Metadata[key] = value
 	}
