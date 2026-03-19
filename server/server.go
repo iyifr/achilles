@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
-	"strconv"
 	"syscall"
 
 	"github.com/valyala/fasthttp"
@@ -17,15 +15,6 @@ import (
 
 var wtService = wt.WiredTiger()
 
-// getEnvOrDefault returns the environment variable value or a default
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-// Data directories - configurable via environment variables for Docker
 var (
 	WIREDTIGER_DIR = getEnvOrDefault("WT_HOME", "volumes/WT_HOME")
 	VECTORS_DIR    = getEnvOrDefault("VECTORS_HOME", "volumes/vectors")
@@ -37,7 +26,7 @@ func initializeLogger() (*zap.Logger, *zap.SugaredLogger) {
 	return log, sugaredLog
 }
 
-// setupSignalHandlers configures graceful shutdown handlers
+// Graceful shutdown handler
 func setupSignalHandlers(sugaredLog *zap.SugaredLogger, wtService wt.WTService) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -51,7 +40,7 @@ func setupSignalHandlers(sugaredLog *zap.SugaredLogger, wtService wt.WTService) 
 	}()
 }
 
-// openWiredTiger initializes WiredTiger with optimized configuration
+// Init Wiredtiger.
 func openWiredTiger() error {
 	cacheSizeMB := getOptimalCacheSizeMB()
 	wtConfig := fmt.Sprintf("create,cache_size=%dMB,eviction=(threads_min=1,threads_max=2),checkpoint=(wait=600)", cacheSizeMB)
@@ -93,7 +82,6 @@ func StartServer() {
 	sugaredLog = logResult.sugaredLog
 	defer log.Sync()
 
-	// Open WiredTiger
 	if err := openWiredTiger(); err != nil {
 		fmt.Printf("Error opening WiredTiger: %v\n", err)
 		os.Exit(1)
@@ -126,55 +114,4 @@ func StartServer() {
 		sugaredLog.Errorw("Server error", "error", err)
 		os.Exit(1)
 	}
-}
-
-// Can be overridden with WT_CACHE_SIZE env var (in MB)
-func getOptimalCacheSizeMB() int {
-	if envCache := os.Getenv("WT_CACHE_SIZE"); envCache != "" {
-		if size, err := strconv.Atoi(envCache); err == nil && size > 0 {
-			return size
-		}
-	}
-
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-
-	systemRAM := m.Sys / (1024 * 1024)
-	optimalCache := int(float64(systemRAM) * 0.10)
-
-	if optimalCache < 64 {
-		optimalCache = 64
-	}
-	if optimalCache > 1024 {
-		optimalCache = 1024
-	}
-
-	return optimalCache
-}
-
-func ensureDirectory(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return os.MkdirAll(path, 0755)
-	}
-	return nil
-}
-
-func initializeDirectories() error {
-	errChan := make(chan error, 2)
-
-	go func() {
-		errChan <- ensureDirectory(WIREDTIGER_DIR)
-	}()
-
-	go func() {
-		errChan <- ensureDirectory(VECTORS_DIR)
-	}()
-
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
