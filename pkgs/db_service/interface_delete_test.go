@@ -260,9 +260,14 @@ func TestDeleteDocuments(t *testing.T) {
 	}
 
 	// Delete first two documents
-	err = dbSvc.DeleteDocuments(collName, []string{doc1Id, doc2Id})
+	deletedIds, err := dbSvc.DeleteDocuments(collName, []string{doc1Id, doc2Id})
 	if err != nil {
 		t.Fatalf("DeleteDocuments failed: %v", err)
+	}
+
+	// Verify returned deleted IDs
+	if len(deletedIds) != 2 {
+		t.Errorf("Expected 2 deleted IDs, got %d", len(deletedIds))
 	}
 
 	// Verify deleted documents no longer exist
@@ -315,9 +320,12 @@ func TestDeleteDocuments_NotFound(t *testing.T) {
 	}
 
 	// Try to delete non-existent documents (should not error, just skip)
-	err = dbSvc.DeleteDocuments(collName, []string{"nonexistent1", "nonexistent2"})
+	deletedIds, err := dbSvc.DeleteDocuments(collName, []string{"nonexistent1", "nonexistent2"})
 	if err != nil {
 		t.Errorf("DeleteDocuments should not error for non-existent document IDs: %v", err)
+	}
+	if len(deletedIds) != 0 {
+		t.Errorf("Expected 0 deleted IDs for non-existent documents, got %d", len(deletedIds))
 	}
 }
 
@@ -331,7 +339,7 @@ func TestDeleteDocuments_CollectionNotFound(t *testing.T) {
 	}
 
 	// Try to delete documents from non-existent collection
-	err = dbSvc.DeleteDocuments("nonexistent", []string{"doc1"})
+	_, err = dbSvc.DeleteDocuments("nonexistent", []string{"doc1"})
 	if err == nil {
 		t.Errorf("DeleteDocuments should return error for non-existent collection")
 	}
@@ -360,7 +368,7 @@ func TestDeleteDocuments_EmptyList(t *testing.T) {
 	}
 
 	// Try to delete with empty list
-	err = dbSvc.DeleteDocuments(collName, []string{})
+	_, err = dbSvc.DeleteDocuments(collName, []string{})
 	if err == nil {
 		t.Errorf("DeleteDocuments should return error for empty document IDs list")
 	}

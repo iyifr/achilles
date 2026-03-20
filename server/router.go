@@ -519,13 +519,19 @@ func DeleteDocumentsHandler(ctx *fasthttp.RequestCtx) {
 		Logger:    log,
 	})
 
-	err := db.DeleteDocuments(collection_name, requestBody.DocumentIds)
+	deletedIds, err := db.DeleteDocuments(collection_name, requestBody.DocumentIds)
 	if err != nil {
 		handleError(ctx, err)
 		return
 	}
 
+	response := map[string]interface{}{
+		"deleted_ids":   deletedIds,
+		"deleted_count": len(deletedIds),
+	}
+	jsonResp, _ := json.Marshal(response)
+
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
-	ctx.Write([]byte(`{"message":"Documents deleted successfully"}`))
+	ctx.Write(jsonResp)
 }
