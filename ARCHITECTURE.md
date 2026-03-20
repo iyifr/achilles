@@ -9,11 +9,11 @@ This requires **two core components**:
 Then you need a bridge between the two abstractions.
 
 ```
-    ┌─────────────────────────────────────────────────────────────────────────┐
-    │                                                                         │
+    ┌────────────────────────────────────────────────────────────────────────┐
+    │                                                                        │
     │   ╭─────────────────────────╮         ╭─────────────────────────╮      │
     │   │                         │         │                         │      │
-    │   │   📄 DOCUMENT STORE     │          |  🔍 VECTOR INDEX       │      │
+    │   │   📄 DOCUMENT STORE     │         |    🔍 VECTOR INDEX      |      │
     │   │                         │         │                         │      │
     │   │   WiredTiger + BSON     │         │       FAISS             │      │
     │   │                         │         │                         │      │
@@ -22,10 +22,10 @@ Then you need a bridge between the two abstractions.
     │   │  • B-tree indexing      │         │  • Optimized ANN algorithms    │
     │   │                         │         │                         │      │
     │   ╰─────────────────────────╯         ╰─────────────────────────╯      │
-    │              │                                    │                    │
-    │              │         ╭──────────────╮          │                    │
-    │              ╰────────►│  LABELS KV   │◄─────────╯                    │
-    │                        │   Table      │                                │
+    │              │                                   │                     │
+    │              │         ╭──────────────╮          │                     │
+    │              ╰────────►│  LABELS KV   │◄─────────╯                     │
+    │                        │   STORE      │                                │
     │                        │              │                                │
     │                        │ FAISS_ID ──► │                                │
     │                        │   DOC_ID     │                                │
@@ -48,23 +48,24 @@ Then you need a bridge between the two abstractions.
     ║                                                                  ║
     ║    ID (Key)  ──────────►  Document (BSON bytes)                  ║
     ║                                                                  ║
-    ║    ┌──────────┐           ┌─────────────────────────────────┐   ║
-    ║    │"doc-001" │ ────────► │ { content: "...",               │   ║
-    ║    └──────────┘           │   metadata: {                   │   ║
-    ║                           │     tags: ["ml", "python"],     │   ║
-    ║                           │     author: { name: "jane" },   │   ║
-    ║                           │     acls: ["admin", "reader"]   │   ║
-    ║                           │   }                             │   ║
-    ║                           │ }                               │   ║
-    ║                           └─────────────────────────────────┘   ║
+    ║    ┌──────────┐           ┌─────────────────────────────────┐    ║
+    ║    │"doc-001" │ ────────► │ { content: "...",               │    ║
+    ║    └──────────┘           │   metadata: {                   │    ║
+    ║                           │     tags: ["ml", "python"],     │    ║
+    ║                           │     author: { name: "jane" },   │    ║
+    ║                           │     acls: ["admin", "reader"]   │    ║
+    ║                           │   }                             │    ║
+    ║                           │ }                               │    ║
+    ║                           └─────────────────────────────────┘    ║
     ║                                                                  ║
-    ║    ✓ Nested objects in metadata? No problem!                    ║
-    ║    ✓ Array query filters? No problem!                           ║
+    ║    ✓ Nested objects in metadata                                  ║
+    ║    ✓ Array query filters                                         ║
     ║                                                                  ║
     ╚══════════════════════════════════════════════════════════════════╝
 ```
 
-BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you marshal arbitrary structs (representing objects) into `[]byte`. We can store this in a Wiredtiger table.
+BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you marshal arbitrary structs (representing objects) into 
+`[]byte`. We can store this in a Wiredtiger table.
 
 ---
 
@@ -75,17 +76,17 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
     ║  FAISS INDEX LIFECYCLE                                           ║
     ╠══════════════════════════════════════════════════════════════════╣
     ║                                                                  ║
-    ║     ┌─────────────┐      ┌─────────────┐      ┌─────────────┐   ║
-    ║     │   CREATE    │      │     ADD     │      │   SEARCH    │   ║
-    ║     │   INDEX     │─────►│   VECTORS   │─────►│   TOP-K     │   ║
-    ║     └─────────────┘      └─────────────┘      └─────────────┘   ║
-    ║           │                    │                    │           ║
-    ║           ▼                    ▼                    ▼           ║
-    ║     ┌─────────────┐      ┌─────────────┐      ┌─────────────┐   ║
-    ║     │  • Flat     │      │ Auto-assigns│      │  Returns:   │   ║
-    ║     │  • HNSW     │      │   labels    │      │  (labels,   │   ║
-    ║     │  • IVF      │      │   1, 2, 3…  │      │  distances) │   ║
-    ║     └─────────────┘      └─────────────┘      └─────────────┘   ║
+    ║     ┌─────────────┐      ┌─────────────┐      ┌─────────────┐    ║
+    ║     │   CREATE    │      │     ADD     │      │   SEARCH    │    ║
+    ║     │   INDEX     │─────►│   VECTORS   │─────►│   TOP-K     │    ║
+    ║     └─────────────┘      └─────────────┘      └─────────────┘    ║
+    ║           │                    │                    │            ║
+    ║           ▼                    ▼                    ▼            ║
+    ║     ┌─────────────┐      ┌─────────────┐      ┌─────────────┐    ║
+    ║     │  • Flat     │      │ Auto-assigns│      │  Returns:   │    ║
+    ║     │  • HNSW     │      │   labels    │      │  (labels,   │    ║
+    ║     │  • IVF      │      │   1, 2, 3…  │      │  distances) │    ║
+    ║     └─────────────┘      └─────────────┘      └─────────────┘    ║
     ║                                                                  ║
     ╚══════════════════════════════════════════════════════════════════╝
 ```
@@ -103,7 +104,7 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
                                     ▼
     ┌───────────────────────────────────────────────────────────────────┐
     │  STEP 1                                                           │
-    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
     │     FAISS.search(query, k=5)  ──────►  labels: [42, 17, 89, ...]  │
     │                                        distances: [0.1, 0.2, ...] │
@@ -113,7 +114,7 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
                                     ▼
     ┌───────────────────────────────────────────────────────────────────┐
     │  STEP 2                                                           │
-    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
     │     Labels Table:  42 ──────► "article-1"                         │
     │                    17 ──────► "article-7"                         │
@@ -124,7 +125,7 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
                                     ▼
     ┌───────────────────────────────────────────────────────────────────┐
     │  STEP 3                                                           │
-    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
     │     WiredTiger.get("article-1")  ──────►  [BSON bytes]            │
     │                                                                   │
@@ -133,9 +134,9 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
                                     ▼
     ┌───────────────────────────────────────────────────────────────────┐
     │  STEP 4                                                           │
-    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  │
+    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
-    │     bson.Unmarshal(bytes)  ──────►  GlowstickDocument{            │
+    │     bson.Unmarshal(bytes)  ──────►  Document{                     │
     │                                       ID: "article-1",            │
     │                                       Content: "...",             │
     │                                       Metadata: {...}             │
@@ -153,7 +154,7 @@ BSON (Binary-JSON) is awesome for this usecase. In Go, the bson library lets you
 
 ### Hybrid Search
 
-In some RAG workflows, retrieving semantically similar chunks isn't enough—you need the _right_ chunks for that user at that time. This is where structured metadata comes in:
+In some RAG workflows, retrieving semantically similar chunks has a post filtering requirement. This is where structured metadata comes in:
 
 ```
     ┌─────────────────────────────────────────────────────────────────────┐
@@ -164,23 +165,23 @@ In some RAG workflows, retrieving semantically similar chunks isn't enough—you
     │                                                                     │
     │                            ▼                                        │
     │                                                                     │
-    │     ┌─────────────────────────────────────────────────────────┐    │
-    │     │  Vector Search         Metadata Filter                   │    │
-    │     │       │                      │                           │    │
-    │     │       ▼                      ▼                           │    │
-    │     │  ┌─────────┐           ┌──────────────────────┐         │    │
-    │     │  │ Top 100 │  ──────►  │ WHERE                │         │    │
-    │     │  │ similar │           │   acls $arrContains  │         │    │
-    │     │  │ chunks  │           │   ["managers"]       │         │    │
-    │     │  └─────────┘           └──────────────────────┘         │    │
-    │     │                               │                          │    │
-    │     │                               ▼                          │    │
-    │     │                        ┌─────────────┐                   │    │
-    │     │                        │  Top 10     │                   │    │
-    │     │                        │  PERMITTED  │                   │    │
-    │     │                        │  results    │                   │    │
-    │     │                        └─────────────┘                   │    │
-    │     └─────────────────────────────────────────────────────────┘    │
+    │     ┌─────────────────────────────────────────────────────────┐     │
+    │     │  Vector Search         Metadata Filter                  │     │
+    │     │       │                      │                          │     │
+    │     │       ▼                      ▼                          │     │
+    │     │  ┌─────────┐           ┌──────────────────────┐         │     │
+    │     │  │ Top 100 │  ──────►  │ WHERE                │         │     │
+    │     │  │ similar │           │   acls $arrContains  │         │     │
+    │     │  │ chunks  │           │   ["managers"]       │         │     │
+    │     │  └─────────┘           └──────────────────────┘         │     │
+    │     │                               │                         │     │
+    │     │                               ▼                         │     │
+    │     │                        ┌─────────────┐                  │     │
+    │     │                        │  Top 10     │                  │     │
+    │     │                        │  PERMITTED  │                  │     │
+    │     │                        │  results    │                  │     │
+    │     │                        └─────────────┘                  │     │
+    │     └─────────────────────────────────────────────────────────┘     │
     │                                                                     │
     └─────────────────────────────────────────────────────────────────────┘
 ```
