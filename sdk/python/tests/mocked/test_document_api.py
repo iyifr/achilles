@@ -190,47 +190,47 @@ class TestSyncDocumentApi:
         mock_sync_http.delete.return_value = fake_delete_documents_res
         assert api.delete_documents(make_delete_input()) == fake_delete_documents_res
 
-    # ── query_documents ───────────────────────────────────────────────────────
+    # ── query ───────────────────────────────────────────────────────
 
-    def test_query_documents_calls_correct_url(self, api, mock_sync_http, fake_query_res):
+    def test_query_calls_correct_url(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input())
+        api.query(make_query_input())
         assert mock_sync_http.post.call_args[0][0] == QUERY_PATH
 
-    def test_query_documents_uses_post_verb(self, api, mock_sync_http, fake_query_res):
+    def test_query_uses_post_verb(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input())
+        api.query(make_query_input())
         mock_sync_http.post.assert_called_once()
         mock_sync_http.get.assert_not_called()
 
-    def test_query_documents_passes_expected_status(self, api, mock_sync_http, fake_query_res):
+    def test_query_passes_expected_status(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input())
+        api.query(make_query_input())
         assert mock_sync_http.post.call_args[1].get("expected_status") == 200
 
-    def test_query_documents_payload_contains_query_embedding(self, api, mock_sync_http, fake_query_res):
+    def test_query_payload_contains_query_embedding(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input())
+        api.query(make_query_input())
         assert mock_sync_http.post.call_args[1]["json"]["query_embedding"] == [0.1, 0.2, 0.3]
 
-    def test_query_documents_payload_contains_top_k(self, api, mock_sync_http, fake_query_res):
+    def test_query_payload_contains_top_k(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input())
+        api.query(make_query_input())
         assert mock_sync_http.post.call_args[1]["json"]["top_k"] == 5
 
-    def test_query_documents_payload_where_none_when_not_set(self, api, mock_sync_http, fake_query_res):
+    def test_query_payload_where_none_when_not_set(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input())
+        api.query(make_query_input())
         assert mock_sync_http.post.call_args[1]["json"]["where"] is None
 
-    def test_query_documents_payload_where_serialized_correctly(self, api, mock_sync_http, fake_query_res):
+    def test_query_payload_where_serialized_correctly(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        api.query_documents(make_query_input(where=W.eq("category", "fruit")))
+        api.query(make_query_input(where=W.eq("category", "fruit")))
         assert mock_sync_http.post.call_args[1]["json"]["where"] == {"category": {"$eq": "fruit"}}
 
-    def test_query_documents_returns_response(self, api, mock_sync_http, fake_query_res):
+    def test_query_returns_response(self, api, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
-        assert api.query_documents(make_query_input()) == fake_query_res
+        assert api.query(make_query_input()) == fake_query_res
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -363,40 +363,40 @@ class TestAsyncDocumentApi:
         mock_async_http.delete.return_value = fake_delete_documents_res
         assert await api.delete_documents(make_delete_input()) == fake_delete_documents_res
 
-    # ── query_documents ───────────────────────────────────────────────────────
+    # ── query ───────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_query_documents_calls_correct_url(self, api, mock_async_http, fake_query_res):
+    async def test_query_calls_correct_url(self, api, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
-        await api.query_documents(make_query_input())
+        await api.query(make_query_input())
         assert mock_async_http.post.call_args[0][0] == QUERY_PATH
 
     @pytest.mark.asyncio
-    async def test_query_documents_uses_post_verb(self, api, mock_async_http, fake_query_res):
+    async def test_query_uses_post_verb(self, api, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
-        await api.query_documents(make_query_input())
+        await api.query(make_query_input())
         mock_async_http.post.assert_called_once()
         mock_async_http.get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_query_documents_payload_contains_query_embedding(self, api, mock_async_http, fake_query_res):
+    async def test_query_payload_contains_query_embedding(self, api, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
-        await api.query_documents(make_query_input())
+        await api.query(make_query_input())
         assert mock_async_http.post.call_args[1]["json"]["query_embedding"] == [0.1, 0.2, 0.3]
 
     @pytest.mark.asyncio
-    async def test_query_documents_payload_contains_top_k(self, api, mock_async_http, fake_query_res):
+    async def test_query_payload_contains_top_k(self, api, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
-        await api.query_documents(make_query_input())
+        await api.query(make_query_input())
         assert mock_async_http.post.call_args[1]["json"]["top_k"] == 5
 
     @pytest.mark.asyncio
-    async def test_query_documents_payload_where_serialized_correctly(self, api, mock_async_http, fake_query_res):
+    async def test_query_payload_where_serialized_correctly(self, api, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
-        await api.query_documents(make_query_input(where=W.eq("category", "fruit")))
+        await api.query(make_query_input(where=W.eq("category", "fruit")))
         assert mock_async_http.post.call_args[1]["json"]["where"] == {"category": {"$eq": "fruit"}}
 
     @pytest.mark.asyncio
-    async def test_query_documents_returns_response(self, api, mock_async_http, fake_query_res):
+    async def test_query_returns_response(self, api, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
-        assert await api.query_documents(make_query_input()) == fake_query_res
+        assert await api.query(make_query_input()) == fake_query_res

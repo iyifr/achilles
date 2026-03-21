@@ -135,7 +135,7 @@ class DatabaseImpl:
 #                 message=f"Failed to get collections: {e}",
 #                 code=ERROR_INVALID_RESPONSE,
 #             ) from e
-# 
+#
 #         if self._mode == "async":
 #             async def _aquery_collections() -> list[Document]:
 #                 _collections = await asyncio.gather(
@@ -150,11 +150,11 @@ class DatabaseImpl:
 #                     *cast(list[Awaitable[QueryRes]], results)
 #                 )
 #                 docs = [doc for docs in results for doc in docs.documents]
-# 
+#
 #                 # slice the results and rerank
 #                 return sorted(docs, key=lambda d: getattr(d, "distance", 0))[:top_k]
 #             return _aquery_collections()
-# 
+#
 #         # get the results from each collection
 #         results: list[QueryRes] = [
 #             collection._query(top_k, query_embedding, query, where)

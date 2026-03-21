@@ -59,7 +59,7 @@ class _DocumentApiBase:
             expected_status=200,
         )
 
-    def _query_documents(self, input: QueryReqInput) -> QueryRes | Awaitable[QueryRes]:
+    def _query(self, input: QueryReqInput) -> QueryRes | Awaitable[QueryRes]:
         return self._http.post(
             f"/database/{self._database_name}/collections/{self._collection_name}/documents/query",
             QueryRes,
@@ -96,8 +96,8 @@ class SyncDocumentApi(_DocumentApiBase):
     def delete_documents(self, input: DeleteDocumentsReqInput) -> DeleteDocumentsRes:
         return cast(DeleteDocumentsRes, self._delete_documents(input))
 
-    def query_documents(self, input: QueryReqInput) -> QueryRes:
-        return cast(QueryRes, self._query_documents(input))
+    def query(self, input: QueryReqInput) -> QueryRes:
+        return cast(QueryRes, self._query(input))
 
 
 class AsyncDocumentApi(_DocumentApiBase):
@@ -128,5 +128,5 @@ class AsyncDocumentApi(_DocumentApiBase):
     async def delete_documents(self, input: DeleteDocumentsReqInput) -> DeleteDocumentsRes:
         return await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(input))
 
-    async def query_documents(self, input: QueryReqInput) -> QueryRes:
-        return await cast(Awaitable[QueryRes], self._query_documents(input))
+    async def query(self, input: QueryReqInput) -> QueryRes:
+        return await cast(Awaitable[QueryRes], self._query(input))

@@ -45,6 +45,11 @@ class TestSyncClient:
         result = client.database("mydb")
         assert isinstance(result, SyncDatabase)
 
+    def test_database_defaults_to_default_db(self, client):
+        result = client.database()
+        assert isinstance(result, SyncDatabase)
+        assert result.name == "default"
+
     def test_database_returns_cached_instance(self, client):
         db1 = client.database("mydb")
         db2 = client.database("mydb")
@@ -119,6 +124,11 @@ class TestAsyncClient:
     def test_database_returns_async_database(self, client):
         result = client.database("mydb")
         assert isinstance(result, AsyncDatabase)
+
+    def test_database_defaults_to_default_db(self, client):
+        result = client.database()
+        assert isinstance(result, AsyncDatabase)
+        assert result.name == "default"
 
     def test_database_returns_cached_instance(self, client):
         db1 = client.database("mydb")

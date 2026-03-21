@@ -168,7 +168,7 @@ class CollectionImpl:
 
                     return await cast(
                         Awaitable[QueryRes],
-                        self._documents_api.query_documents(
+                        self._documents_api.query(
                             QueryReqInput(
                                 query_embedding=embeddings, top_k=top_k,
                                 where=cast(WhereClause | None, where)
@@ -179,7 +179,7 @@ class CollectionImpl:
                 return _get_embeddings()  # type: ignore[return-value]
             else:
                 query_embedding = self.embedding_function([query])[0]  # type: ignore[index]
-        return self._documents_api.query_documents(
+        return self._documents_api.query(
             QueryReqInput(
                 query_embedding=query_embedding, top_k=top_k,
                 where=cast(WhereClause | None, where)
@@ -253,7 +253,7 @@ class SyncCollection(CollectionImpl):
     ) -> None:
         self._delete_documents(document_ids)
 
-    def query_documents(
+    def query(
         self,
         top_k: int,
         query_embedding: list[float] | None = None,
@@ -329,7 +329,7 @@ class AsyncCollection(CollectionImpl):
     ) -> None:
         await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(document_ids))
 
-    async def query_documents(
+    async def query(
         self,
         top_k: int,
         query_embedding: list[float] | None = None,

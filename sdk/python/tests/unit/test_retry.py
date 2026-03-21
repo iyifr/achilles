@@ -158,6 +158,40 @@ class TestWithRetry:
                     with pytest.raises(AchillesError):
                         with_retry(fn, max_attempts=2)
 
+    def test_retries_on_idempotent_method_get(self):
+        """GET + connection error must result in a retry (the bug: method="" broke this)."""
+        call_count = 0
+
+        def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise AchillesError("conn", code=ERROR_CONNECTION)
+            return "ok"
+
+        with patch("achillesdb.http.retry.time.sleep"):
+            with patch("achillesdb.http.retry._backoff", return_value=0):
+                result = with_retry(flaky, max_attempts=3, method="GET")
+
+        assert result == "ok"
+        assert call_count == 2  # retried exactly once
+
+    def test_does_not_retry_on_non_idempotent_method_post(self):
+        """POST + connection error must NOT retry."""
+        call_count = 0
+
+        def failing():
+            nonlocal call_count
+            call_count += 1
+            raise AchillesError("conn", code=ERROR_CONNECTION)
+
+        with patch("achillesdb.http.retry.time.sleep"):
+            with patch("achillesdb.http.retry._backoff", return_value=0):
+                with pytest.raises(AchillesError):
+                    with_retry(failing, max_attempts=3, method="POST")
+
+        assert call_count == 1  # never retried
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # with_retry_async

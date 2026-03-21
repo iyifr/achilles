@@ -38,6 +38,7 @@ def _should_retry(exc, attempt, max_attempts, method: str = "") -> bool:
 def with_retry(
     fn: Callable[[], T],
     max_attempts: int = 3,
+    method: str = "",
 ) -> T:
     attempt = 0
     while True:
@@ -45,7 +46,7 @@ def with_retry(
             return fn()
         except Exception as exc:
             attempt += 1
-            if not _should_retry(exc, attempt, max_attempts):
+            if not _should_retry(exc, attempt, max_attempts, method=method):
                 raise
             retry_after = getattr(exc, "retry_after", None)
             delay = _backoff(attempt, retry_after)
@@ -56,6 +57,7 @@ def with_retry(
 async def with_retry_async(
     fn: Callable[[], T],
     max_attempts: int = 3,
+    method: str = "",
 ) -> T:
     attempt = 0
     while True:
@@ -63,7 +65,7 @@ async def with_retry_async(
             return await fn()
         except Exception as exc:
             attempt += 1
-            if not _should_retry(exc, attempt, max_attempts):
+            if not _should_retry(exc, attempt, max_attempts, method=method):
                 raise
             retry_after = getattr(exc, "retry_after", None)
             delay = _backoff(attempt, retry_after)

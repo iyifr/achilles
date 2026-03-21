@@ -1,7 +1,7 @@
 """
 tests/integration/test_query.py
 ================================
-Integration tests for query_documents and query_collections.
+Integration tests for query and query_collections.
 Requires a running AchillesDB server.
 
 These tests verify that where filters are correctly transmitted
@@ -54,7 +54,7 @@ class TestQueryDocumentsIntegration:
         yield coll
 
     def test_basic_query_returns_results(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=3,
             query_embedding=self.emb["query"],
         )
@@ -62,21 +62,21 @@ class TestQueryDocumentsIntegration:
         assert len(results) <= 3
 
     def test_results_have_distance_field(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=3,
             query_embedding=self.emb["query"],
         )
         assert all("distance" in r for r in results)
 
     def test_top_k_respected(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=2,
             query_embedding=self.emb["query"],
         )
         assert len(results) <= 2
 
     def test_where_equality_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.eq("category", "fruit"),
@@ -85,7 +85,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["category"] == "fruit"
 
     def test_where_gt_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.gt("year", 2020),
@@ -94,7 +94,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] > 2020
 
     def test_where_gte_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.gte("year", 2021),
@@ -103,7 +103,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] >= 2021
 
     def test_where_lt_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.lt("year", 2022),
@@ -112,7 +112,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] < 2022
 
     def test_where_lte_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.lte("year", 2021),
@@ -121,7 +121,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] <= 2021
 
     def test_where_ne_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.ne("popular", False),
@@ -130,7 +130,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["popular"] is not False
 
     def test_where_in_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.in_("year", [2021, 2022]),
@@ -139,7 +139,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] in [2021, 2022]
 
     def test_where_and_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.and_(
@@ -152,7 +152,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] > 2020
 
     def test_where_or_filter(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=W.or_(
@@ -165,7 +165,7 @@ class TestQueryDocumentsIntegration:
 
     def test_where_as_raw_dict(self):
         # plain dict where clause must work end-to-end (auto-normalized to WhereClause)
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where={"year": {"$gte": 2022}},
@@ -174,7 +174,7 @@ class TestQueryDocumentsIntegration:
             assert r["metadata"]["year"] >= 2022
 
     def test_where_none_returns_all(self):
-        results = self.collection.query_documents(
+        results = self.collection.query(
             top_k=10,
             query_embedding=self.emb["query"],
             where=None,

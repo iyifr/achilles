@@ -232,6 +232,7 @@ class _HTTPClient:
                 expected_status=expected_status, resType=resType
             ),
             max_attempts=self._max_retries,
+            method=method,
         ) if retry else self._request_sync(
             method, path, json=json, params=params,
             headers=headers, timeout=timeout,
@@ -242,6 +243,7 @@ class _HTTPClient:
         return await with_retry_async(
             lambda: self._request_async(method, path, **kwargs),
             max_attempts=self._max_retries,
+            method=method,
         )
 
     def _request_sync(

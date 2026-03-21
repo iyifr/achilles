@@ -438,9 +438,9 @@ class TestSyncDocumentApiUrls:
         self.api.delete_documents(_delete_input())
         assert _url_arg(self.http.delete) == self.base
 
-    def test_query_documents_url(self):
+    def test_query_url(self):
         self.http.post.return_value = QueryRes(documents=[], doc_count=0)
-        self.api.query_documents(_query_input())
+        self.api.query(_query_input())
         assert _url_arg(self.http.post) == f"{self.base}/query"
 
     # ── correct HTTP methods ──────────────────────────────────────────────────
@@ -468,9 +468,9 @@ class TestSyncDocumentApiUrls:
         self.api.delete_documents(_delete_input())
         self.http.delete.assert_called_once()
 
-    def test_query_documents_uses_post(self):
+    def test_query_uses_post(self):
         self.http.post.return_value = QueryRes(documents=[], doc_count=0)
-        self.api.query_documents(_query_input())
+        self.api.query(_query_input())
         self.http.post.assert_called_once()
 
     # ── db and collection names embedded correctly ────────────────────────────
@@ -559,12 +559,12 @@ class TestAsyncDocumentApiUrls:
             assert _url_arg(http.post) == f"/database/{DB}/collections/{COLL}/documents"
         asyncio.run(run())
 
-    def test_query_documents_url(self):
+    def test_query_url(self):
         async def run():
             http = _async_http()
             http.post = AsyncMock(return_value=QueryRes(documents=[], doc_count=0))
             api = self._make_api(http)
-            await api.query_documents(_query_input())
+            await api.query(_query_input())
             base = f"/database/{DB}/collections/{COLL}/documents"
             assert _url_arg(http.post) == f"{base}/query"
         asyncio.run(run())

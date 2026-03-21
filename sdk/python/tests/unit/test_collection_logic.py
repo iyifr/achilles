@@ -12,7 +12,7 @@ Covers:
   - add_documents  (sync + async: embedding resolution, before_insert hook,
                     validation errors, inspect.isawaitable path)
   - get_documents  (sync + async)
-  - query_documents (sync + async: embedding resolution, where normalization)
+  - query (sync + async: embedding resolution, where normalization)
   - update_documents
   - delete_documents
   - count
@@ -364,7 +364,7 @@ class TestGetDocuments:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# query_documents — sync
+# query — sync
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestSyncQueryDocuments:
@@ -373,7 +373,7 @@ class TestSyncQueryDocuments:
         coll, mock_http = _make_sync_collection()
         mock_http.post.return_value = _query_res(2)
 
-        result = coll.query_documents(top_k=5, query_embedding=EMB_QUERY)
+        result = coll.query(top_k=5, query_embedding=EMB_QUERY)
 
         assert isinstance(result, list)
         assert len(result) == 2
@@ -384,7 +384,7 @@ class TestSyncQueryDocuments:
         coll, mock_http = _make_sync_collection(embedding_function=embed_fn)
         mock_http.post.return_value = _query_res(1)
 
-        coll.query_documents(top_k=5, query="find me something")
+        coll.query(top_k=5, query="find me something")
 
         # embedding_function must receive query wrapped in a list
         embed_fn.assert_called_once_with(["find me something"])
@@ -395,14 +395,14 @@ class TestSyncQueryDocuments:
         coll, mock_http = _make_sync_collection(embedding_function=embed_fn)
         mock_http.post.return_value = _query_res(1)
 
-        coll.query_documents(top_k=5, query="test")
+        coll.query(top_k=5, query="test")
         mock_http.post.assert_called_once()
 
     def test_no_embedding_no_function_raises(self):
         coll, _ = _make_sync_collection(embedding_function=None)
 
         with pytest.raises(AchillesError) as exc_info:
-            coll.query_documents(top_k=5)
+            coll.query(top_k=5)
         assert exc_info.value.code == ERROR_VALIDATION
 
     def test_where_dict_normalized_to_where_clause(self):
@@ -410,7 +410,7 @@ class TestSyncQueryDocuments:
         mock_http.post.return_value = _query_res(1)
 
         # passing a plain dict — must not raise
-        coll.query_documents(
+        coll.query(
             top_k=5,
             query_embedding=EMB_QUERY,
             where={"category": "tech"},
@@ -421,7 +421,7 @@ class TestSyncQueryDocuments:
         coll, mock_http = _make_sync_collection()
         mock_http.post.return_value = _query_res(1)
 
-        coll.query_documents(
+        coll.query(
             top_k=5,
             query_embedding=EMB_QUERY,
             where=W.eq("category", "tech"),
@@ -432,14 +432,14 @@ class TestSyncQueryDocuments:
         coll, mock_http = _make_sync_collection()
         mock_http.post.return_value = _query_res(1)
 
-        coll.query_documents(top_k=5, query_embedding=EMB_QUERY, where=None)
+        coll.query(top_k=5, query_embedding=EMB_QUERY, where=None)
         mock_http.post.assert_called_once()
 
     def test_returns_list_of_dicts(self):
         coll, mock_http = _make_sync_collection()
         mock_http.post.return_value = _query_res(2)
 
-        result = coll.query_documents(top_k=5, query_embedding=EMB_QUERY)
+        result = coll.query(top_k=5, query_embedding=EMB_QUERY)
         assert isinstance(result, list)
         assert all(isinstance(d, dict) for d in result)
 
@@ -447,12 +447,12 @@ class TestSyncQueryDocuments:
         coll, mock_http = _make_sync_collection()
         mock_http.post.return_value = _query_res(2)
 
-        result = coll.query_documents(top_k=5, query_embedding=EMB_QUERY)
+        result = coll.query(top_k=5, query_embedding=EMB_QUERY)
         assert "distance" in result[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# query_documents — async
+# query — async
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestAsyncQueryDocuments:
@@ -462,7 +462,7 @@ class TestAsyncQueryDocuments:
             coll, mock_http = _make_async_collection()
             mock_http.post = AsyncMock(return_value=_query_res(2))
 
-            result = await coll.query_documents(top_k=5, query_embedding=EMB_QUERY)
+            result = await coll.query(top_k=5, query_embedding=EMB_QUERY)
             assert isinstance(result, list)
             assert len(result) == 2
 
@@ -475,7 +475,7 @@ class TestAsyncQueryDocuments:
             coll, mock_http = _make_async_collection(embedding_function=sync_embed)
             mock_http.post = AsyncMock(return_value=_query_res(1))
 
-            await coll.query_documents(top_k=5, query="find me")
+            await coll.query(top_k=5, query="find me")
 
             # embedding_function must receive [query], not query
             sync_embed.assert_called_once_with(["find me"])
@@ -491,7 +491,7 @@ class TestAsyncQueryDocuments:
             coll, mock_http = _make_async_collection(embedding_function=async_embed)
             mock_http.post = AsyncMock(return_value=_query_res(1))
 
-            result = await coll.query_documents(top_k=5, query="find me")
+            result = await coll.query(top_k=5, query="find me")
             assert isinstance(result, list)
 
         asyncio.run(run())
@@ -500,7 +500,7 @@ class TestAsyncQueryDocuments:
         async def run():
             coll, _ = _make_async_collection(embedding_function=None)
             with pytest.raises(AchillesError) as exc_info:
-                await coll.query_documents(top_k=5)
+                await coll.query(top_k=5)
             assert exc_info.value.code == ERROR_VALIDATION
 
         asyncio.run(run())
@@ -510,7 +510,7 @@ class TestAsyncQueryDocuments:
             coll, mock_http = _make_async_collection()
             mock_http.post = AsyncMock(return_value=_query_res(2))
 
-            result = await coll.query_documents(top_k=5, query_embedding=EMB_QUERY)
+            result = await coll.query(top_k=5, query_embedding=EMB_QUERY)
             assert all(isinstance(d, dict) for d in result)
 
         asyncio.run(run())

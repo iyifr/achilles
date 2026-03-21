@@ -15,7 +15,7 @@ Sections
  2. test_database        – list collections, create collection, get collection
  3. test_add_documents   – add_documents (with metadata, without, single, before_insert)
  4. test_get_docs        – get_documents, count, peek
- 5. test_query           – query_documents (by embedding, all where filter variants)
+ 5. test_query           – query (by embedding, all where filter variants)
  6. test_update          – update_documents
  7. test_delete_docs     – delete_documents (single & batch)
  8. test_query_colls     – query_collections (cross-collection)
@@ -220,19 +220,19 @@ async def test_get_docs(coll_a):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SECTION 5 – query_documents
+# SECTION 5 – query
 # ═════════════════════════════════════════════════════════════════════════════
 
 async def test_query(coll_a, coll_b):
-    sep("SECTION 5 – query_documents")
+    sep("SECTION 5 – query")
 
     # 5a. basic vector query
-    res = await coll_a.query_documents(top_k=3, query_embedding=EMB_QUERY_FRUIT)
-    print("query_documents(top_k=3, no filter):")
+    res = await coll_a.query(top_k=3, query_embedding=EMB_QUERY_FRUIT)
+    print("query(top_k=3, no filter):")
     pp.pprint(res)
 
     # 5b. where – equality (W.eq)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=500, query_embedding=EMB_QUERY_FRUIT,
         where=W.eq("category", "fruit"),
     )
@@ -240,7 +240,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5c. where – greater-than (W.gt)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.gt("year", 2020),
     )
@@ -248,7 +248,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5d. where – greater-than-or-equal (W.gte)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.gte("year", 2021),
     )
@@ -256,7 +256,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5e. where – less-than (W.lt)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.lt("year", 2022),
     )
@@ -264,7 +264,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5f. where – less-than-or-equal (W.lte)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.lte("year", 2021),
     )
@@ -272,7 +272,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5g. where – not-equal (W.ne)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.ne("popular", False),
     )
@@ -280,7 +280,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5h. where – in list (W.in_)
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.in_("year", [2021, 2022, 2024]),
     )
@@ -288,7 +288,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5i. where – $and compound
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.and_(W.eq("category", "fruit"), W.gt("year", 2020)),
     )
@@ -296,7 +296,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5j. where – $or compound
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=5, query_embedding=EMB_QUERY_FRUIT,
         where=W.or_(W.eq("popular", True), W.lt("year", 2019)),
     )
@@ -304,7 +304,7 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5k. where – raw dict
-    res = await coll_a.query_documents(
+    res = await coll_a.query(
         top_k=3, query_embedding=EMB_QUERY_FRUIT,
         where={"year": {"$gte": 2022}},
     )
@@ -312,8 +312,8 @@ async def test_query(coll_a, coll_b):
     pp.pprint(res)
 
     # 5l. query COLL_B
-    res = await coll_b.query_documents(top_k=2, query_embedding=EMB_QUERY_ANIM)
-    print("\nquery_documents() in COLL_B (animals):")
+    res = await coll_b.query(top_k=2, query_embedding=EMB_QUERY_ANIM)
+    print("\nquery() in COLL_B (animals):")
     pp.pprint(res)
 
 
@@ -512,9 +512,9 @@ async def test_errors(db, coll_a):
         print(f"  ✓ Error caught: {e}")
 
     # 10e. query with no embedding and no embedding_function
-    print("\n[10e] query_documents without query_embedding or embedding_function:")
+    print("\n[10e] query without query_embedding or embedding_function:")
     try:
-        await coll_a.query_documents(top_k=1)
+        await coll_a.query(top_k=1)
         print("  ✗ expected AchillesError, but none was raised")
     except (AchillesError, ValueError) as e:
         print(f"  ✓ Error caught: {e}")

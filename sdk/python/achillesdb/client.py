@@ -27,16 +27,15 @@ class _AchillesClient:
         port: int = cfg.default_port,
         api_base_path: str = cfg.default_api_base_path,
         ssl: bool = cfg.default_ssl,
-        # default_db: Optional[str] = None,
         embedding_function: EmbeddingFn | None = None,
         timeout: float | None = None,
+        max_retries: int = 3,
         connection_config: ConnectionConfig | None = None,
         logger: logging.Logger | None = None,
         mode: Literal["sync", "async"] = "sync",
     ):
         self._host = host
         self._port = port
-        # self._default_db = default_db
         self._embedding_function = embedding_function
         self._logger = logger or logging.getLogger(__name__)
         self._mode = mode
@@ -50,6 +49,7 @@ class _AchillesClient:
             api_base_path=api_base_path,
             ssl=ssl,
             timeout=timeout,
+            max_retries=max_retries,
             connection_config=connection_config,
             logger=self._logger,
         )
@@ -97,7 +97,7 @@ class _AchillesClient:
     def _list_databases(self) -> GetDatabasesRes:
         return self.database_api.list_databases()  # type: ignore[return-value]
 
-    def _database(self, name: str) -> SyncDatabase | AsyncDatabase:
+    def _database(self, name: str = "default") -> SyncDatabase | AsyncDatabase:
         return self._make_database(name)
 
     def _delete_database(self, name: str) -> DeleteDatabaseRes:
@@ -116,17 +116,17 @@ class AchillesClient(_AchillesClient):
         self,
         host: str = cfg.default_host,
         port: int = cfg.default_port,
-        # default_db: Optional[str] = None,
         embedding_function: EmbeddingFn | None = None,
         timeout: float | None = None,
+        max_retries: int = 3,
         logger: logging.Logger | None = None,
     ):
         super().__init__(
             host=host,
             port=port,
-            # default_db=default_db,
             embedding_function=embedding_function,
             timeout=timeout,
+            max_retries=max_retries,
             logger=logger,
             mode="sync",
         )
@@ -144,7 +144,7 @@ class AchillesClient(_AchillesClient):
             self._make_database(db.name) for db in database.databases
         ]
 
-    def database(self, name: str) -> SyncDatabase:
+    def database(self, name: str = "default") -> SyncDatabase:
         return cast(SyncDatabase, self._database(name))
 
     def delete_database(self, name: str) -> None:
@@ -165,17 +165,17 @@ class AsyncAchillesClient(_AchillesClient):
         self,
         host: str = cfg.default_host,
         port: int = cfg.default_port,
-        # default_db: Optional[str] = None,
         embedding_function: EmbeddingFn | None = None,
         timeout: float | None = None,
+        max_retries: int = 3,
         logger: logging.Logger | None = None,
     ):
         super().__init__(
             host=host,
             port=port,
-            # default_db=default_db,
             embedding_function=embedding_function,
             timeout=timeout,
+            max_retries=max_retries,
             logger=logger,
             mode="async",
         )
@@ -193,7 +193,7 @@ class AsyncAchillesClient(_AchillesClient):
             self._make_database(db.name) for db in database.databases
         ]
 
-    def database(self, name: str) -> AsyncDatabase:
+    def database(self, name: str = "default") -> AsyncDatabase:
         return cast(AsyncDatabase, self._database(name))
 
     async def delete_database(self, name: str) -> None:

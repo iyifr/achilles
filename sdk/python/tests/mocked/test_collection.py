@@ -101,27 +101,27 @@ class TestSyncCollectionDocuments:
         assert isinstance(result, list)
         assert len(result) <= 2
 
-    def test_query_documents_with_embedding(self, mock_sync_http, fake_query_res):
+    def test_query_with_embedding(self, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
         coll = make_sync_collection(mock_sync_http)
-        result = coll.query_documents(top_k=2, query_embedding=[0.1, 0.2, 0.3])
+        result = coll.query(top_k=2, query_embedding=[0.1, 0.2, 0.3])
         assert isinstance(result, list)
         mock_sync_http.post.assert_called_once()
 
-    def test_query_documents_with_where(self, mock_sync_http, fake_query_res):
+    def test_query_with_where(self, mock_sync_http, fake_query_res):
         mock_sync_http.post.return_value = fake_query_res
         coll = make_sync_collection(mock_sync_http)
-        result = coll.query_documents(
+        result = coll.query(
             top_k=2,
             query_embedding=[0.1, 0.2, 0.3],
             where=W.eq("category", "fruit"),
         )
         assert isinstance(result, list)
 
-    def test_query_documents_no_embedding_no_fn_raises(self, mock_sync_http):
+    def test_query_no_embedding_no_fn_raises(self, mock_sync_http):
         coll = make_sync_collection(mock_sync_http)
         with pytest.raises(AchillesError) as exc_info:
-            coll.query_documents(top_k=1)
+            coll.query(top_k=1)
         assert exc_info.value.code == ERROR_VALIDATION
 
     def test_update_documents_calls_put(self, mock_sync_http, fake_update_res):
@@ -181,17 +181,17 @@ class TestAsyncCollectionDocuments:
         assert all(isinstance(d, dict) for d in result)
 
     @pytest.mark.asyncio
-    async def test_query_documents_with_embedding(self, mock_async_http, fake_query_res):
+    async def test_query_with_embedding(self, mock_async_http, fake_query_res):
         mock_async_http.post.return_value = fake_query_res
         coll = make_async_collection(mock_async_http)
-        result = await coll.query_documents(top_k=2, query_embedding=[0.1, 0.2, 0.3])
+        result = await coll.query(top_k=2, query_embedding=[0.1, 0.2, 0.3])
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_query_documents_no_embedding_no_fn_raises(self, mock_async_http):
+    async def test_query_no_embedding_no_fn_raises(self, mock_async_http):
         coll = make_async_collection(mock_async_http)
         with pytest.raises(AchillesError) as exc_info:
-            await coll.query_documents(top_k=1)
+            await coll.query(top_k=1)
         assert exc_info.value.code == ERROR_VALIDATION
 
     @pytest.mark.asyncio
