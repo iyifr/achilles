@@ -1,0 +1,48 @@
+[project]
+name = "python3"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "requests>=2.28",
+    "httpx>=0.24",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "flake8>=7.0",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "pytest-cov>=7.0.0",
+    "PyYAML>=6.0",
+]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["achillesdb"]
+
+# Silences missing stubs for requests / httpx
+ignore_missing_imports = true
+
+# Useful but not blocking
+warn_return_any = true
+warn_unused_ignores = false   # flip to true once errors are zero
+warn_redundant_casts = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--tb=short -v"
+filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
+markers = [
+    "unit: unit tests — no server required, always run",
+    "integration: integration tests — require a running AchillesDB server",
+]
