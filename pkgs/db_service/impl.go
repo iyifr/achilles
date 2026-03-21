@@ -410,8 +410,19 @@ func (s *GDBService) DeleteCollection(collection_name string) error {
 		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
-	// Delete vector index file
+	// Drop the WiredTiger table
+	if err := kv.DeleteTable(collection.TableUri); err != nil {
+		if !IsNotFoundError(err) && !IsBusyError(err) {
+			if s.Logger != nil {
+				s.Logger.Errorw("delete_collection_drop_table_error", "collection", collection_name, "database", s.Name, "table_uri", collection.TableUri, "error", err)
+			}
+			return Storage_Err(Wrap_Err(err, "failed to drop collection table %s", collection.TableUri))
+		}
+	}
+
+	// Evict the FAISS index from the cache
 	if collection.VectorIndexUri != "" {
+		faiss.GlobalIndexCache().Remove(collection.VectorIndexUri)
 		os.Remove(collection.VectorIndexUri)
 	}
 
@@ -1046,7 +1057,6 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		close(resultChan)
 	}()
 
-	// Use slices instead of map to avoid hashing overhead
 	resultSlice := make([]GlowstickQueryResultSet, len(ids))
 	present := make([]bool, len(ids))
 	for result := range resultChan {
@@ -1203,7 +1213,7 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 	}
 	for key, value := range payload.Updates {
 		if doc.Metadata == nil {
-			doc.Metadata = make(map[string]interface{})
+			doc.Metadata = make(map[string]any)
 		}
 		doc.Metadata[key] = value
 	}
@@ -1230,14 +1240,14 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 	return nil
 }
 
-func (s *GDBService) DeleteDocuments(collection_name string, documentIds []string) error {
+func (s *GDBService) DeleteDocuments(collection_name string, documentIds []string) ([]string, error) {
 	start := time.Now()
 	if s.Logger != nil {
 		s.Logger.Infow("delete_documents_start", "collection", collection_name, "database", s.Name, "doc_count", len(documentIds))
 	}
 
 	if len(documentIds) == 0 {
-		return InvalidInput_Err(ErrEmptyDocuments)
+		return nil, InvalidInput_Err(ErrEmptyDocuments)
 	}
 
 	kv := s.KvService
@@ -1249,13 +1259,13 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 		if s.Logger != nil {
 			s.Logger.Errorw("delete_documents_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
 		}
-		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
+		return nil, Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 	if !exists {
 		if s.Logger != nil {
 			s.Logger.Warnw("delete_documents_collection_not_found", "collection", collection_name, "database", s.Name)
 		}
-		return NotFound_Err(ErrCollectionNotFound)
+		return nil, NotFound_Err(ErrCollectionNotFound)
 	}
 
 	var collection CollectionCatalogEntry
@@ -1263,11 +1273,11 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 		if s.Logger != nil {
 			s.Logger.Errorw("delete_documents_unmarshal_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
 		}
-		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
+		return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
 	// Delete each document
-	deletedCount := 0
+	var deletedIds []string
 	for _, docId := range documentIds {
 		// Check if document exists before deleting
 		_, docExists, _ := kv.GetBinaryWithStringKey(collection.TableUri, docId)
@@ -1276,11 +1286,12 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 				if s.Logger != nil {
 					s.Logger.Errorw("delete_documents_delete_error", "collection", collection_name, "database", s.Name, "document_id", docId, "error", err)
 				}
-				return Storage_Err(Wrap_Err(err, "failed to delete document %s", docId))
+				return nil, Storage_Err(Wrap_Err(err, "failed to delete document %s", docId))
 			}
-			deletedCount++
+			deletedIds = append(deletedIds, docId)
 		}
 	}
+	deletedCount := len(deletedIds)
 
 	// Update stats if any documents were deleted
 	if deletedCount > 0 {
@@ -1289,7 +1300,7 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 			if s.Logger != nil {
 				s.Logger.Errorw("delete_documents_stats_get_error", "collection", collection_name, "database", s.Name, "error", err)
 			}
-			return Storage_Err(Wrap_Err(err, "failed to get stats"))
+			return nil, Storage_Err(Wrap_Err(err, "failed to get stats"))
 		}
 		if statsExists {
 			var stats CollectionStats
@@ -1297,7 +1308,7 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 				if s.Logger != nil {
 					s.Logger.Errorw("delete_documents_stats_unmarshal_error", "collection", collection_name, "database", s.Name, "error", err)
 				}
-				return Serialization_Err(Wrap_Err(err, "failed to unmarshal stats"))
+				return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal stats"))
 			}
 
 			stats.Doc_Count -= deletedCount
@@ -1310,14 +1321,14 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 				if s.Logger != nil {
 					s.Logger.Errorw("delete_documents_stats_marshal_error", "collection", collection_name, "database", s.Name, "error", err)
 				}
-				return Serialization_Err(Wrap_Err(err, "failed to marshal updated stats"))
+				return nil, Serialization_Err(Wrap_Err(err, "failed to marshal updated stats"))
 			}
 
 			if err := kv.PutBinary(STATS, []byte(collectionDefKey), updatedStats); err != nil {
 				if s.Logger != nil {
 					s.Logger.Errorw("delete_documents_stats_put_error", "collection", collection_name, "database", s.Name, "error", err)
 				}
-				return Storage_Err(Wrap_Err(err, "failed to update stats"))
+				return nil, Storage_Err(Wrap_Err(err, "failed to update stats"))
 			}
 		}
 	}
@@ -1327,7 +1338,11 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 		s.Logger.Infow("delete_documents_complete", "collection", collection_name, "database", s.Name, "deleted_count", deletedCount, "duration_ms", duration.Milliseconds())
 	}
 
-	return nil
+	if deletedIds == nil {
+		deletedIds = []string{}
+	}
+
+	return deletedIds, nil
 }
 
 func InitTablesHelper(wtService wt.WTService) error {

@@ -13,7 +13,6 @@ var globalLogger *zap.Logger
 var globalSugaredLogger *zap.SugaredLogger
 
 // InitLogger initializes the global logger based on LOG_LEVEL environment variable
-// Supported levels: debug, info, warn, error (default: info)
 // Uses console format for development, JSON for production
 func InitLogger() (*zap.Logger, *zap.SugaredLogger) {
 	logLevel := os.Getenv("LOG_LEVEL")

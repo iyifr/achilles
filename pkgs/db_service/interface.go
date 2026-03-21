@@ -132,7 +132,7 @@ type DBService interface {
 	InsertDocuments(collection_name string, documents []GlowstickDocument) error
 	InsertDocumentsSOA(collection_name string, documents *GlowstickDocumentSOA) error
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
-	DeleteDocuments(collection_name string, documentIds []string) error
+	DeleteDocuments(collection_name string, documentIds []string) ([]string, error)
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickQueryResultSet, error)
 	UpdateDocuments(collection_name string, payload *DocUpdatePayload) error
 }

@@ -46,14 +46,15 @@ func handleError(ctx *fasthttp.RequestCtx, err error) {
 		log.Errorw("untyped_error", "error", err)
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.SetContentType("application/json")
-		ctx.Write([]byte(fmt.Sprintf(`{"error":"%s"}`, err.Error())))
+		ctx.Write(fmt.Appendf(nil, `{"error":"%s"}`, err.Error()))
 		return
+
 	}
 
 	log.Errorw("db_error", "error_code", dbErr.Code, "error", dbErr.Error(), "http_status", dbErr.HTTPStatus())
 	ctx.SetStatusCode(dbErr.HTTPStatus())
 	ctx.SetContentType("application/json")
-	ctx.Write([]byte(fmt.Sprintf(`{"error":"%s"}`, dbErr.Error())))
+	ctx.Write(fmt.Appendf(nil, `{"error":"%s"}`, dbErr.Error()))
 }
 
 func Router() *router.Router {
@@ -173,6 +174,10 @@ func ListCollections(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	if collections == nil {
+		collections = []dbservice.CollectionCatalogEntry{}
+	}
+
 	response := struct {
 		Collections     []dbservice.CollectionCatalogEntry `json:"collections"`
 		CollectionCount int                                `json:"collection_count"`
@@ -246,6 +251,18 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	// Check for duplicate IDs
+	seen := make(map[string]struct{}, numDocs)
+	for _, id := range soaRequest.Ids {
+		if _, exists := seen[id]; exists {
+			ctx.SetStatusCode(fasthttp.StatusBadRequest)
+			ctx.SetContentType("application/json")
+			ctx.Write(fmt.Appendf(nil, `{"error":"duplicate id in payload: %s"}`, id))
+			return
+		}
+		seen[id] = struct{}{}
+	}
+
 	if len(soaRequest.Documents) != numDocs ||
 		len(soaRequest.Embeddings) != numDocs ||
 		len(soaRequest.Metadatas) != numDocs {
@@ -317,6 +334,10 @@ func GetDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	if err != nil {
 		handleError(ctx, err)
 		return
+	}
+
+	if docs == nil {
+		docs = []dbservice.GlowstickDocument{}
 	}
 
 	ctx.SetStatusCode(fasthttp.StatusOK)
@@ -498,13 +519,19 @@ func DeleteDocumentsHandler(ctx *fasthttp.RequestCtx) {
 		Logger:    log,
 	})
 
-	err := db.DeleteDocuments(collection_name, requestBody.DocumentIds)
+	deletedIds, err := db.DeleteDocuments(collection_name, requestBody.DocumentIds)
 	if err != nil {
 		handleError(ctx, err)
 		return
 	}
 
+	response := map[string]interface{}{
+		"deleted_ids":   deletedIds,
+		"deleted_count": len(deletedIds),
+	}
+	jsonResp, _ := json.Marshal(response)
+
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
-	ctx.Write([]byte(`{"message":"Documents deleted successfully"}`))
+	ctx.Write(jsonResp)
 }

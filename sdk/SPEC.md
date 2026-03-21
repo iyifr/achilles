@@ -1,8 +1,10 @@
-# AchillesDB SDK Specification
+# AchillesDB SDK Specification (v1)
 
 ## Overview
 
 Official TypeScript and Python SDKs for AchillesDB (powered by GlowstickDB). Both SDKs communicate with the AchillesDB server over HTTP, targeting `localhost:8180` by default.
+
+**v1 scope**: TypeScript SDK first, Python SDK fast-follow. Core CRUD + single-collection query.
 
 ### Core DX Principles
 
@@ -23,7 +25,7 @@ Official TypeScript and Python SDKs for AchillesDB (powered by GlowstickDB). Bot
 - **Repo location**: `sdks/typescript/` and `sdks/python/` inside the GlowstickDB monorepo
 - **TypeScript module format**: ESM only
 - **TypeScript HTTP client**: native `fetch`
-- **Python HTTP clients**: `requests` (sync), `httpx` (async) — separate class implementations
+- **Python HTTP client**: `httpx` for both sync (`httpx.Client`) and async (`httpx.AsyncClient`)
 
 ---
 
@@ -40,6 +42,7 @@ const client = new AchillesClient({
   defaultDb: "mydb",           // optional — used when db not specified
   embeddingFunction: async (texts: string[]) => number[][], // optional
   timeout: 30000,              // default: 30000ms
+  maxRetries: 3,               // default: 3 — only for idempotent requests
   logger: console,             // optional — any object with .debug(), .info(), .warn(), .error()
 });
 ```
@@ -55,6 +58,7 @@ client = AchillesClient(
     default_db="mydb",             # optional
     embedding_function=my_embed,   # optional: Callable[[list[str]], list[list[float]]]
     timeout=30,                    # default: 30 seconds
+    max_retries=3,                 # default: 3 — only for idempotent requests
     logger=logging.getLogger(),    # optional: standard logging.Logger
 )
 ```
@@ -70,6 +74,7 @@ client = AsyncAchillesClient(
     default_db="mydb",
     embedding_function=my_async_embed,  # async Callable[[list[str]], list[list[float]]]
     timeout=30,
+    max_retries=3,
     logger=logging.getLogger(),
 )
 ```
@@ -83,6 +88,7 @@ client = AsyncAchillesClient(
 | `defaultDb`         | `undefined` / `None`   | If unset, `db` param required on methods  |
 | `embeddingFunction` | `undefined` / `None`   | Required for text-based query if no queryEmbedding provided |
 | `timeout`           | `30000` ms / `30` sec  | Applies to all HTTP requests              |
+| `maxRetries`        | `3`                    | Only idempotent requests (GET, HEAD, DELETE, OPTIONS) retry |
 | `logger`            | `undefined` / `None`   | No logging if unset                       |
 
 ### Connection Validation
@@ -167,8 +173,13 @@ class AchillesError(Exception):
 
 ### Retry Policy
 
-- **No automatic retries.** All errors fail immediately.
-- Users handle retry logic externally.
+Idempotent requests (GET, HEAD, DELETE, OPTIONS) retry automatically. Mutating requests (POST, PUT) never retry.
+
+- **Max attempts**: 3 (configurable via `maxRetries` / `max_retries` on client init)
+- **Backoff**: exponential with jitter — `random(0, min(0.5 * 2^(attempt-1), 30))` seconds
+- **Retry-After**: if the server sends a `Retry-After` header, that value is used instead of calculated backoff
+- **Retryable conditions**: connection errors, HTTP 429 (rate limit), 502, 503, 504 (server errors)
+- All other errors fail immediately
 
 ---
 
@@ -331,7 +342,7 @@ docs = collection.get_documents()
 
 ### Update Documents
 
-Updates metadata only. SDK loops internally for batch updates.
+Updates metadata only. Supports batch via a single server request.
 
 ```ts
 // TypeScript — single document
@@ -340,7 +351,7 @@ await collection.updateDocument({
   metadata: { category: "updated", newField: "value" },
 });
 
-// TypeScript — batch (N requests under the hood)
+// TypeScript — batch (single PUT request)
 await collection.updateDocuments({
   ids: ["doc1", "doc2"],
   metadatas: [
@@ -354,7 +365,7 @@ await collection.updateDocuments({
 # Python — single
 collection.update_document(id="doc1", metadata={"category": "updated"})
 
-# Python — batch
+# Python — batch (single PUT request)
 collection.update_documents(
     ids=["doc1", "doc2"],
     metadatas=[{"category": "updated"}, {"category": "also_updated"}],
@@ -414,56 +425,6 @@ results = collection.query(
 3. If both provided → `queryEmbedding` takes precedence
 4. If neither → throw `AchillesError(code: "VALIDATION")`
 
-### Multi-Collection Query
-
-Runs queries against multiple collections in parallel. Pure SDK sugar — no server endpoint.
-
-```ts
-// TypeScript
-const results = await db.queryCollections({
-  collections: ["actors", "movies"],
-  query: "action hero",
-  topK: 10,
-  where: { year: { $gte: 2020 } },
-  merge: false,  // default: false (grouped)
-});
-
-// Grouped (merge: false):
-// {
-//   results: {
-//     actors: { documents: [...], count: 5 },
-//     movies: { documents: [...], count: 8 },
-//   },
-//   totalCount: 13,
-// }
-
-// Merged (merge: true) — re-ranked by distance globally:
-// {
-//   documents: [
-//     { document: { id, content, metadata, distance }, source: { collection: "actors", database: "mydb" } },
-//     { document: { id, content, metadata, distance }, source: { collection: "movies", database: "mydb" } },
-//   ],
-//   count: 13,
-// }
-```
-
-```python
-# Python
-results = db.query_collections(
-    collections=["actors", "movies"],
-    query="action hero",
-    top_k=10,
-    where={"year": {"$gte": 2020}},
-    merge=False,
-)
-```
-
-#### Embedding for Multi-Collection Query
-
-1. If `queryEmbedding` provided → use it for all collections
-2. If `query` (text) provided → call `embeddingFunction` once, reuse the vector across all collections
-3. If neither → throw
-
 ---
 
 ## Filter Syntax
@@ -496,90 +457,6 @@ Plain objects using MongoDB-style operators. Passed via the `where` parameter.
 | -------- | ------------------------------------------------------ |
 | `$and`   | `{ $and: [{ category: "tech" }, { year: { $gte: 2024 } }] }` |
 | `$or`    | `{ $or: [{ category: "tech" }, { category: "science" }] }`   |
-
----
-
-## Pre-Insert Hooks
-
-Hooks transform documents before they are sent to the server. Passed per-call as options.
-
-### Per-Document Hook
-
-Called once for each document. Receives a single document, returns a transformed document.
-
-```ts
-// TypeScript
-await collection.addDocuments(
-  {
-    ids: ["doc1"],
-    documents: ["  Hello World  \n\n"],
-    embeddings: [[0.1, 0.2]],
-  },
-  {
-    beforeInsert: (doc: { id: string; document: string; metadata?: any }) => ({
-      ...doc,
-      document: doc.document.trim().replace(/\n+/g, " "),
-    }),
-  }
-);
-// document sent to server: "Hello World"
-```
-
-```python
-# Python
-def clean(doc):
-    return {**doc, "document": doc["document"].strip()}
-
-collection.add_documents(
-    ids=["doc1"],
-    documents=["  Hello World  \n\n"],
-    embeddings=[[0.1, 0.2]],
-    before_insert=clean,
-)
-```
-
-### Batch Hook
-
-Called once with all documents. Receives the full list, returns a transformed list.
-
-```ts
-// TypeScript
-await collection.addDocuments(
-  { ids: [...], documents: [...], embeddings: [...] },
-  {
-    beforeInsertBatch: (docs) => {
-      // deduplicate by content
-      const seen = new Set();
-      return docs.filter(d => {
-        if (seen.has(d.document)) return false;
-        seen.add(d.document);
-        return true;
-      });
-    },
-  }
-);
-```
-
-### Hook Execution Order
-
-1. `beforeInsertBatch` runs first (if provided) — operates on the full array
-2. `beforeInsert` runs second (if provided) — called on each document from the batch result
-3. Embedding generation happens after hooks (so hooks can modify content before embedding)
-4. Client-side validation runs after hooks and embedding
-
-### Hook Receives
-
-The hook receives documents in an intermediate format — an array of objects:
-
-```ts
-{ id: string, document: string, metadata?: Record<string, any>, embedding?: number[] }
-```
-
-The hook may modify `document`, `metadata`, or `embedding`. It must NOT modify `id`. If `beforeInsertBatch` changes the array length (e.g. filtering), only the remaining documents are inserted, and the return value reflects the actual count.
-
-### Async Hooks
-
-Hooks may be async in TypeScript (return `Promise`). In Python async client, hooks may be `async def`. The sync Python client requires sync hooks.
 
 ---
 
@@ -671,23 +548,6 @@ interface QueryResult {
   documents: QueryDocument[];
   count: number;
 }
-
-// Multi-collection query (grouped)
-interface GroupedQueryResult {
-  results: Record<string, QueryResult>;
-  totalCount: number;
-}
-
-// Multi-collection query (merged)
-interface MergedQueryDocument {
-  document: QueryDocument;
-  source: { collection: string; database: string };
-}
-
-interface MergedQueryResult {
-  documents: MergedQueryDocument[];
-  count: number;
-}
 ```
 
 ### Python Types
@@ -716,17 +576,16 @@ Equivalent dataclasses/TypedDicts with snake_case naming.
 | `listCollections()`                     | `CollectionInfo[]`      | `GET /api/v1/database/{db}/collections`               |
 | `collection(name)`                      | `Collection`            | (no server call)                                      |
 | `deleteCollection(name)`               | `void` / `None`         | `DELETE /api/v1/database/{db}/collections/{name}`     |
-| `queryCollections({...})`               | `Grouped/MergedResult`  | (multiple parallel queries)                           |
 
 ### Collection
 
 | Method                                  | Returns                 | Server Endpoint                                                |
 | --------------------------------------- | ----------------------- | -------------------------------------------------------------- |
 | `count()`                               | `number` / `int`        | `GET /api/v1/database/{db}/collections/{col}`                  |
-| `addDocuments({...}, opts?)`            | `InsertResult`          | `POST /api/v1/database/{db}/collections/{col}/documents`       |
+| `addDocuments({...})`                   | `InsertResult`          | `POST /api/v1/database/{db}/collections/{col}/documents`       |
 | `getDocuments()`                        | `GetResult`             | `GET /api/v1/database/{db}/collections/{col}/documents`        |
 | `updateDocument({id, metadata})`        | `void` / `None`         | `PUT /api/v1/database/{db}/collections/{col}/documents`        |
-| `updateDocuments({ids, metadatas})`     | `void` / `None`         | (N sequential PUT requests)                                    |
+| `updateDocuments({ids, metadatas})`     | `void` / `None`         | `PUT /api/v1/database/{db}/collections/{col}/documents`        |
 | `deleteDocuments({ids})`                | `void` / `None`         | `DELETE /api/v1/database/{db}/collections/{col}/documents`     |
 | `query({...})`                          | `QueryResult`           | `POST /api/v1/database/{db}/collections/{col}/documents/query` |
 | `peek(n?)`                              | `Document[]`            | `GET .../documents` → slice first N (default 5)                |
@@ -758,15 +617,14 @@ sdks/
     pyproject.toml        # achillesdb
     achillesdb/
       __init__.py         # public exports
-      client.py           # AchillesClient (sync)
-      async_client.py     # AsyncAchillesClient
+      client.py           # AchillesClient (sync, using httpx.Client)
+      async_client.py     # AsyncAchillesClient (using httpx.AsyncClient)
       database.py         # Database / AsyncDatabase
       collection.py       # Collection / AsyncCollection
       types.py            # dataclasses
       errors.py           # AchillesError
       validation.py       # client-side validation
-      http.py             # requests wrapper (sync)
-      async_http.py       # httpx wrapper (async)
+      http.py             # httpx wrapper (shared sync/async logic)
     tests/
       test_client.py
       test_database.py
@@ -795,23 +653,15 @@ const client = new AchillesClient({
 const db = await client.createDatabase("movies_db");
 const collection = await db.createCollection("reviews");
 
-// Insert with preprocessing hook
-const result = await collection.addDocuments(
-  {
-    ids: ["r1", "r2"],
-    documents: ["  Great movie!  ", "  Terrible plot.  "],
-    metadatas: [
-      { rating: 5, genre: "action" },
-      { rating: 1, genre: "drama" },
-    ],
-  },
-  {
-    beforeInsert: (doc) => ({
-      ...doc,
-      document: doc.document.trim(),
-    }),
-  }
-);
+// Insert documents
+const result = await collection.addDocuments({
+  ids: ["r1", "r2"],
+  documents: ["Great movie!", "Terrible plot."],
+  metadatas: [
+    { rating: 5, genre: "action" },
+    { rating: 1, genre: "drama" },
+  ],
+});
 console.log(result); // { ids: ["r1", "r2"], count: 2 }
 
 // Query with filters
@@ -819,14 +669,6 @@ const results = await collection.query({
   query: "best action movie",
   topK: 5,
   where: { genre: "action", rating: { $gte: 4 } },
-});
-
-// Multi-collection query
-const merged = await db.queryCollections({
-  collections: ["reviews", "summaries"],
-  query: "best action movie",
-  topK: 10,
-  merge: true,
 });
 ```
 
@@ -845,12 +687,11 @@ collection = db.create_collection("reviews")
 
 result = collection.add_documents(
     ids=["r1", "r2"],
-    documents=["  Great movie!  ", "  Terrible plot.  "],
+    documents=["Great movie!", "Terrible plot."],
     metadatas=[
         {"rating": 5, "genre": "action"},
         {"rating": 1, "genre": "drama"},
     ],
-    before_insert=lambda doc: {**doc, "document": doc["document"].strip()},
 )
 
 results = collection.query(
@@ -859,3 +700,13 @@ results = collection.query(
     where={"genre": "action", "rating": {"$gte": 4}},
 )
 ```
+
+---
+
+## Future Roadmap
+
+Features deferred from v1 — will be added based on user feedback:
+
+- **Pre-insert hooks** — `beforeInsert` / `beforeInsertBatch` transforms on documents before server send
+- **Cross-collection query** — query multiple collections in one call (planned as a backend endpoint, not SDK-side fan-out)
+- **Pagination** — cursor-based pagination for `getDocuments()` (requires backend support with WiredTiger cursors)
