@@ -181,38 +181,6 @@ class TestSyncAddDocuments:
             )
         assert exc_info.value.code == ERROR_VALIDATION
 
-    def test_before_insert_hook_transforms_documents(self):
-        """Hook must be applied to documents before they reach the server."""
-        embed_fn = MagicMock(return_value=[EMB_A])
-        coll, mock_http = _make_sync_collection(embedding_function=embed_fn)
-        mock_http.post.return_value = _insert_res()
-
-        hook = MagicMock(side_effect=lambda docs: [d.upper() for d in docs])
-
-        coll.add_documents(
-            ids=["a"],
-            documents=["hello"],
-            embeddings=None,
-            metadatas=None,
-            before_insert=hook,
-        )
-
-        hook.assert_called_once_with(["hello"])
-        # embedding function receives original docs, hook transforms for server
-        embed_fn.assert_called_once_with(["hello"])
-
-    def test_before_insert_none_sends_documents_as_is(self):
-        coll, mock_http = _make_sync_collection()
-        mock_http.post.return_value = _insert_res()
-
-        coll.add_documents(
-            ids=["a"],
-            documents=["original doc"],
-            embeddings=[EMB_A],
-            metadatas=None,
-            before_insert=None,
-        )
-        mock_http.post.assert_called_once()
 
     def test_validation_error_raised_before_http_call(self):
         # duplicate ids should fail at Pydantic validation, not reach the server
@@ -319,24 +287,6 @@ class TestAsyncAddDocuments:
 
         asyncio.run(run())
 
-    def test_before_insert_hook_applied_in_async(self):
-        async def run():
-            sync_embed = MagicMock(return_value=[EMB_A])
-            coll, mock_http = _make_async_collection(embedding_function=sync_embed)
-            mock_http.post = AsyncMock(return_value=_insert_res())
-
-            hook = MagicMock(side_effect=lambda docs: [d.strip() for d in docs])
-
-            await coll.add_documents(
-                ids=["a"],
-                documents=["  hello  "],
-                embeddings=None,
-                metadatas=None,
-                before_insert=hook,
-            )
-            hook.assert_called_once()
-
-        asyncio.run(run())
 
     def test_add_documents_async_returns_none(self):
         async def run():

@@ -49,21 +49,6 @@ class TestSyncCollectionDocuments:
         )
         mock_sync_http.post.assert_called_once()
 
-    def test_add_documents_before_insert_applied(self, mock_sync_http, fake_insert_res):
-        mock_sync_http.post.return_value = fake_insert_res
-        coll = make_sync_collection(mock_sync_http)
-
-        transformer = MagicMock(side_effect=lambda docs: [d.upper() for d in docs])
-        coll.add_documents(
-            ids=["doc-1"],
-            documents=["hello"],
-            embeddings=[[0.1, 0.2, 0.3]],
-            metadatas=[{}],
-            before_insert=transformer,
-        )
-        transformer.assert_called_once_with(["hello"])
-        call_kwargs = mock_sync_http.post.call_args[1]
-        assert "HELLO" in call_kwargs["json"]["documents"]
 
     def test_add_documents_no_embeddings_no_fn_raises(self, mock_sync_http):
         coll = make_sync_collection(mock_sync_http)
@@ -186,19 +171,6 @@ class TestAsyncCollectionDocuments:
             )
         assert exc_info.value.code == ERROR_VALIDATION
 
-    @pytest.mark.asyncio
-    async def test_add_documents_before_insert_applied(self, mock_async_http, fake_insert_res):
-        mock_async_http.post.return_value = fake_insert_res
-        coll = make_async_collection(mock_async_http)
-        transformer = MagicMock(side_effect=lambda docs: [d.upper() for d in docs])
-        await coll.add_documents(
-            ids=["doc-1"],
-            documents=["hello"],
-            embeddings=[[0.1, 0.2, 0.3]],
-            metadatas=[{}],
-            before_insert=transformer,
-        )
-        transformer.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_documents_returns_list_of_dicts(self, mock_async_http, fake_get_documents_res):

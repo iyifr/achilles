@@ -180,15 +180,15 @@ def test_add_documents(coll_a, coll_b):
     )
     print("add_documents() – single doc (doc-4) added to COLL_A  ✓")
 
-    # 3d. add with before_insert transformer
-    coll_a.add_documents(
-        ids=["doc-5"],
-        documents=["Lemons are sour citrus fruits."],
-        embeddings=[[0.05, 0.15, 0.25, 0.35]],
-        metadatas=[{"category": "fruit", "year": 2018, "popular": False}],
-        before_insert=lambda docs: [d.upper() for d in docs],
-    )
-    print("add_documents() – doc with before_insert (doc-5) added  ✓")
+#     # 3d. add with before_insert transformer
+#     coll_a.add_documents(
+#         ids=["doc-5"],
+#         documents=["Lemons are sour citrus fruits."],
+#         embeddings=[[0.05, 0.15, 0.25, 0.35]],
+#         metadatas=[{"category": "fruit", "year": 2018, "popular": False}],
+#         before_insert=lambda docs: [d.upper() for d in docs],
+#     )
+#     print("add_documents() – doc with before_insert (doc-5) added  ✓")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -372,47 +372,47 @@ def test_delete_docs(coll_a):
 # SECTION 8 – query_collections (cross-collection)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def test_query_colls(db, coll_a):
-    sep("SECTION 8 – query_collections (cross-collection)")
-
-    # seed a couple of extra docs so there is material for cross-collection queries
-    coll_a.add_documents(
-        ids=["doc-10", "doc-11"],
-        documents=["Oranges are vitamin C rich.", "Grapes come in red and green."],
-        embeddings=[[0.3, 0.3, 0.5, 0.5], [0.2, 0.4, 0.4, 0.6]],
-        metadatas=[
-            {"category": "fruit", "year": 2023, "popular": True},
-            {"category": "fruit", "year": 2022, "popular": False},
-        ],
-    )
-
-    # 8a. basic cross-collection query
-    res = db.query_collections(
-        collection_names=[COLL_A, COLL_B],
-        top_k=4,
-        query_embedding=EMB_QUERY_FRUIT,
-    )
-    print(f"query_collections(['{COLL_A}', '{COLL_B}'], top_k=4):")
-    pp.pprint(res)
-
-    # 8b. cross-collection with where filter
-    res = db.query_collections(
-        collection_names=[COLL_A, COLL_B],
-        top_k=3,
-        query_embedding=EMB_QUERY_ANIM,
-        where=W.gt("year", 2020),
-    )
-    print("\nquery_collections with where=W.gt('year', 2020):")
-    pp.pprint(res)
-
-    # 8c. single-collection animal query via query_collections
-    res = db.query_collections(
-        collection_names=[COLL_B],
-        top_k=2,
-        query_embedding=EMB_QUERY_ANIM,
-    )
-    print("\nquery_collections(COLL_B only, animal query):")
-    pp.pprint(res)
+# def test_query_colls(db, coll_a):
+#     sep("SECTION 8 – query_collections (cross-collection)")
+#
+#     # seed a couple of extra docs so there is material for cross-collection queries
+#     coll_a.add_documents(
+#         ids=["doc-10", "doc-11"],
+#         documents=["Oranges are vitamin C rich.", "Grapes come in red and green."],
+#         embeddings=[[0.3, 0.3, 0.5, 0.5], [0.2, 0.4, 0.4, 0.6]],
+#         metadatas=[
+#             {"category": "fruit", "year": 2023, "popular": True},
+#             {"category": "fruit", "year": 2022, "popular": False},
+#         ],
+#     )
+#
+#     # 8a. basic cross-collection query
+#     res = db.query_collections(
+#         collection_names=[COLL_A, COLL_B],
+#         top_k=4,
+#         query_embedding=EMB_QUERY_FRUIT,
+#     )
+#     print(f"query_collections(['{COLL_A}', '{COLL_B}'], top_k=4):")
+#     pp.pprint(res)
+#
+#     # 8b. cross-collection with where filter
+#     res = db.query_collections(
+#         collection_names=[COLL_A, COLL_B],
+#         top_k=3,
+#         query_embedding=EMB_QUERY_ANIM,
+#         where=W.gt("year", 2020),
+#     )
+#     print("\nquery_collections with where=W.gt('year', 2020):")
+#     pp.pprint(res)
+#
+#     # 8c. single-collection animal query via query_collections
+#     res = db.query_collections(
+#         collection_names=[COLL_B],
+#         top_k=2,
+#         query_embedding=EMB_QUERY_ANIM,
+#     )
+#     print("\nquery_collections(COLL_B only, animal query):")
+#     pp.pprint(res)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -542,7 +542,7 @@ if __name__ == "__main__":
     test_query(coll_a, coll_b)
     test_update(coll_a)
     test_delete_docs(coll_a)
-    test_query_colls(db, coll_a)
+    # test_query_colls(db, coll_a)
     test_context_manager()
     test_errors(db, coll_a)
 

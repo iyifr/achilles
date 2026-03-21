@@ -78,7 +78,6 @@ class CollectionImpl:
         documents: list[str],
         embeddings: list[list[float]] | None = None,
         metadatas: list[dict[str, Any]] | None = None,
-        before_insert: Callable[[list[str]], list[str]] | None = None,
     ) -> InsertDocumentsRes | Awaitable[InsertDocumentsRes]:
         # TODO: review error handling
         # TODO: implement doc embedding
@@ -99,7 +98,7 @@ class CollectionImpl:
                         embeddings = _embeddings
                     docs_data = InsertDocumentReqInput(
                         ids=ids,
-                        documents=before_insert(documents) if before_insert else documents,
+                        documents=documents,
                         embeddings=embeddings,
                         metadatas=metadatas if metadatas is not None else [{} for _ in range(len(ids))],
                     )
@@ -111,7 +110,7 @@ class CollectionImpl:
             embeddings = cast(list[list[float]], _embeddings)
         docs_data = InsertDocumentReqInput(
             ids=ids,
-            documents=before_insert(documents) if before_insert else documents,
+            documents=documents,
             embeddings=embeddings,
             metadatas=metadatas if metadatas is not None else [{} for _ in range(len(ids))],
         )
@@ -227,10 +226,9 @@ class SyncCollection(CollectionImpl):
         documents: list[str],
         embeddings: list[list[float]] | None = None,
         metadatas: list[dict[str, Any]] | None = None,
-        before_insert: Callable[[list[str]], list[str]] | None = None,
     ) -> None:
         self._add_documents(
-            ids, documents, embeddings, metadatas, before_insert
+            ids, documents, embeddings, metadatas
         )
 
     def get_documents(self) -> list[GetDocDict]:
@@ -304,10 +302,9 @@ class AsyncCollection(CollectionImpl):
         documents: list[str],
         embeddings: list[list[float]] | None = None,
         metadatas: list[dict[str, Any]] | None = None,
-        before_insert: Callable[[list[str]], list[str]] | None = None,
     ) -> None:
         await cast(Awaitable[InsertDocumentsRes], self._add_documents(
-            ids, documents, embeddings, metadatas, before_insert
+            ids, documents, embeddings, metadatas
         ))
 
     async def get_documents(self) -> list[GetDocDict]:
