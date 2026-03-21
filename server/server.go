@@ -104,7 +104,7 @@ func StartServer() {
 		Handler:            r.Handler,
 		ReadBufferSize:     16384,
 		WriteBufferSize:    16384,
-		MaxRequestBodySize: 100 * 1024 * 1024,
+		MaxRequestBodySize: 20 * 1024 * 1024,
 	}
 
 	sugaredLog.Infow("Server started", "port", 8180)
