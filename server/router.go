@@ -319,7 +319,7 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		Logger:    log,
 	})
 
-	err := db.InsertDocumentsSOA(collection_name, soa)
+	err := db.InsertDocuments(collection_name, soa)
 	if err != nil {
 		handleError(ctx, err)
 		return

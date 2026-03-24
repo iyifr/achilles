@@ -47,7 +47,7 @@ func TestDeleteDB(t *testing.T) {
 		},
 	}
 
-	err = dbSvc.InsertDocuments(collName, documents)
+	err = dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents))
 	if err != nil {
 		t.Fatalf("Failed to insert documents: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestDeleteCollection(t *testing.T) {
 		},
 	}
 
-	err = dbSvc.InsertDocuments(collName, documents)
+	err = dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents))
 	if err != nil {
 		t.Fatalf("Failed to insert documents: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestDeleteDocuments(t *testing.T) {
 		},
 	}
 
-	err = dbSvc.InsertDocuments(collName, documents)
+	err = dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents))
 	if err != nil {
 		t.Fatalf("Failed to insert documents: %v", err)
 	}
