@@ -797,7 +797,7 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 
 	for i, id := range ids {
 		label := int64(id)
-		if docID, ok := lc.Get(label); ok {
+		if docID, ok := lc.Get(collection.TableUri, label); ok {
 			resolved = append(resolved, labelResult{docID: docID, distance: distances[i]})
 		} else {
 			misses = append(misses, cacheMiss{label: label, idsIndex: i})
@@ -821,7 +821,7 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 			if !exists {
 				continue
 			}
-			lc.Put(m.label, val)
+			lc.Put(collection.TableUri, m.label, val)
 			resolved = append(resolved, labelResult{docID: val, distance: distances[m.idsIndex]})
 		}
 	}
