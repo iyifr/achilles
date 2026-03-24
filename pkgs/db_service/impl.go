@@ -633,16 +633,17 @@ func (s *GDBService) InsertDocuments(collection_name string, documents *Glowstic
 		}
 
 		doc_bytes, release, err := BsonMarshalWithPool(doc)
-		defer release()
-
 		if err != nil {
+			release()
 			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
 		}
 
 		key := []byte(doc.Id)
 		if err := docWriter.PutBinary(key, doc_bytes); err != nil {
+			release()
 			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
 		}
+		release()
 	}
 
 	if err := docWriter.Commit(); err != nil {
