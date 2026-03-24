@@ -1257,6 +1257,50 @@ static int wt_batch_close(wt_batch_ctx_t *ctx) {
     return err;
 }
 
+// ============================================================================
+// BATCH READER C FUNCTIONS
+// ============================================================================
+
+// Read a string value by string key using an already-open batch context.
+// Returns 0 on success, WT_NOTFOUND (-31803) if key missing, other error codes on failure.
+static int wt_batch_get_str(wt_batch_ctx_t *ctx, const char *key, const char **outVal) {
+    if (!ctx || !ctx->cursor || !key || !outVal) return -1;
+    ctx->cursor->set_key(ctx->cursor, key);
+    int err = ctx->cursor->search(ctx->cursor);
+    if (err != 0) return err;
+    return ctx->cursor->get_value(ctx->cursor, outVal);
+}
+
+// Read a binary value by binary key using an already-open batch context.
+// Caller must free outVal->data.
+static int wt_batch_get_bin(wt_batch_ctx_t *ctx,
+                            const unsigned char *key, size_t key_len,
+                            WT_ITEM *outVal) {
+    if (!ctx || !ctx->cursor || !key || !outVal) return -1;
+    outVal->data = NULL;
+    outVal->size = 0;
+
+    WT_ITEM key_item;
+    key_item.data = (void*)key;
+    key_item.size = key_len;
+    ctx->cursor->set_key(ctx->cursor, &key_item);
+
+    int err = ctx->cursor->search(ctx->cursor);
+    if (err != 0) return err;
+
+    WT_ITEM val;
+    err = ctx->cursor->get_value(ctx->cursor, &val);
+    if (err != 0) return err;
+
+    if (val.data && val.size > 0) {
+        outVal->data = malloc(val.size);
+        if (!outVal->data) return -1;
+        memcpy(outVal->data, val.data, val.size);
+        outVal->size = val.size;
+    }
+    return 0;
+}
+
 */
 import "C"
 import (
@@ -2092,6 +2136,101 @@ func (w *cgoBatchWriter) Close() error {
 		w.ctx = nil
 		if err != 0 {
 			return fmt.Errorf("batch close failed: %d", int(err))
+		}
+	}
+	return nil
+}
+
+// ============================================================================
+// BATCH READER IMPLEMENTATION
+// ============================================================================
+
+type cgoBatchReader struct {
+	ctx      *C.wt_batch_ctx_t
+	isBinary bool
+	closed   bool
+}
+
+// NewBatchReader creates a batch reader that keeps a single session/cursor open
+// for multiple lookups, eliminating per-read session/cursor overhead.
+func (s *cgoService) NewBatchReader(table string, table_type TABLE_VALUE_FORMATS) (BatchReader, error) {
+	if s.conn == nil {
+		return nil, errors.New("connection not open")
+	}
+
+	ctable := C.CString(table)
+	defer C.free(unsafe.Pointer(ctable))
+
+	var isBinaryC C.int = 0
+	isBinaryTable := table_type == VALUE_FORMAT_BINARY
+	if isBinaryTable {
+		isBinaryC = 1
+	}
+
+	ctx := C.wt_batch_open(s.conn, ctable, isBinaryC)
+	if ctx == nil {
+		return nil, fmt.Errorf("failed to open batch reader for table %s", table)
+	}
+
+	return &cgoBatchReader{
+		ctx:      ctx,
+		isBinary: isBinaryTable,
+		closed:   false,
+	}, nil
+}
+
+func (r *cgoBatchReader) GetString(key string) (string, bool, error) {
+	if r.closed || r.ctx == nil {
+		return "", false, errors.New("batch reader is closed")
+	}
+
+	ckey := C.CString(key)
+	defer C.free(unsafe.Pointer(ckey))
+
+	var cval *C.char
+	err := C.wt_batch_get_str(r.ctx, ckey, &cval)
+	if err != 0 {
+		return "", false, nil // not found
+	}
+	return C.GoString(cval), true, nil
+}
+
+func (r *cgoBatchReader) GetBinary(key []byte) ([]byte, bool, error) {
+	if r.closed || r.ctx == nil {
+		return nil, false, errors.New("batch reader is closed")
+	}
+	if len(key) == 0 {
+		return nil, false, errors.New("key cannot be empty")
+	}
+
+	var outVal C.WT_ITEM
+	err := C.wt_batch_get_bin(r.ctx,
+		(*C.uchar)(unsafe.Pointer(&key[0])), C.size_t(len(key)),
+		&outVal)
+	if err != 0 {
+		return nil, false, nil // not found
+	}
+
+	if outVal.data == nil {
+		return nil, false, nil
+	}
+
+	result := C.GoBytes(unsafe.Pointer(outVal.data), C.int(outVal.size))
+	C.free(outVal.data)
+	return result, true, nil
+}
+
+func (r *cgoBatchReader) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+
+	if r.ctx != nil {
+		err := C.wt_batch_close(r.ctx)
+		r.ctx = nil
+		if err != 0 {
+			return fmt.Errorf("batch reader close failed: %d", int(err))
 		}
 	}
 	return nil

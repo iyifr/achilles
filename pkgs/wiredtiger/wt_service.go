@@ -32,6 +32,7 @@ type WTService interface {
 	ScanRange(table string, startKey string, endKey string) (StringRangeCursor, error)
 	ScanRangeBinary(table string, startKey, endKey []byte) (BinaryRangeCursor, error)
 	NewBatchWriter(table string, table_type TABLE_VALUE_FORMATS) (BatchWriter, error)
+	NewBatchReader(table string, table_type TABLE_VALUE_FORMATS) (BatchReader, error)
 }
 
 func WiredTiger() WTService {
@@ -75,5 +76,13 @@ type BatchWriter interface {
 	PutBinary(key, value []byte) error
 	PutString(key, value string) error
 	Commit() error
+	Close() error
+}
+
+// BatchReader provides efficient batch reading within a single session.
+// Amortizes session/cursor open/close across multiple lookups.
+type BatchReader interface {
+	GetString(key string) (string, bool, error)
+	GetBinary(key []byte) ([]byte, bool, error)
 	Close() error
 }
