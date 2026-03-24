@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
+
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -780,133 +780,94 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		return docs, nil
 	}
 
-	// Helper function to process a single document.
-	// Returns (nil, nil) when a document is legitimately skipped (not found, filtered out).
-	// Returns (nil, err) on actual storage/deserialization failures.
-	processDoc := func(id int64, distance float32) (*GlowstickQueryResultSet, error) {
-		key := strconv.FormatInt(id, 10)
+	// Phase 1: Resolve label→docID mappings (cache-first, batch-fallback)
+	lc := GlobalLabelCache()
+	type labelResult struct {
+		docID    string
+		distance float32
+	}
+	resolved := make([]labelResult, 0, len(ids))
 
-		val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-		if err != nil {
-			return nil, Storage_Err(Wrap_Err(err, "failed to get label mapping for label %d", id))
-		}
-		if !exists {
-			return nil, nil
-		}
+	// Indices of ids that missed the cache and need a WT lookup
+	type cacheMiss struct {
+		label    int64
+		idsIndex int // position in ids/distances
+	}
+	var misses []cacheMiss
 
-		docIDBytes := []byte(val)
-		docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
+	for i, id := range ids {
+		label := int64(id)
+		if docID, ok := lc.Get(label); ok {
+			resolved = append(resolved, labelResult{docID: docID, distance: distances[i]})
+		} else {
+			misses = append(misses, cacheMiss{label: label, idsIndex: i})
+		}
+	}
+
+	// Batch-read any cache misses
+	if len(misses) > 0 {
+		labelReader, err := kv.NewBatchReader(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, wt.VALUE_FORMAT_STRING)
 		if err != nil {
-			return nil, Storage_Err(Wrap_Err(err, "failed to get document %s", val))
+			return nil, Storage_Err(Wrap_Err(err, "failed to open label batch reader"))
+		}
+		defer labelReader.Close()
+
+		for _, m := range misses {
+			key := strconv.FormatInt(m.label, 10)
+			val, exists, err := labelReader.GetString(key)
+			if err != nil {
+				return nil, Storage_Err(Wrap_Err(err, "failed to get label mapping for label %d", m.label))
+			}
+			if !exists {
+				continue
+			}
+			lc.Put(m.label, val)
+			resolved = append(resolved, labelResult{docID: val, distance: distances[m.idsIndex]})
+		}
+	}
+
+	if len(resolved) == 0 {
+		return docs, nil
+	}
+
+	// Phase 2: Batch-read all documents (single session/cursor)
+	docReader, err := kv.NewBatchReader(collection.TableUri, wt.VALUE_FORMAT_BINARY)
+	if err != nil {
+		return nil, Storage_Err(Wrap_Err(err, "failed to open document batch reader"))
+	}
+	defer docReader.Close()
+
+	for _, lr := range resolved {
+		docBin, exists, err := docReader.GetBinary([]byte(lr.docID))
+		if err != nil {
+			return nil, Storage_Err(Wrap_Err(err, "failed to get document %s", lr.docID))
 		}
 		if !exists || len(docBin) == 0 {
-			return nil, nil
+			continue
 		}
 
-		var doc GlowstickDocument
-		if err := bson.Unmarshal(docBin, &doc); err != nil {
-			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal document %s", val))
+		doc, err := unmarshalQueryDoc(docBin)
+		if err != nil {
+			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal document %s", lr.docID))
 		}
 
-		if query.MaxDistance != 0 && distance >= query.MaxDistance {
-			return nil, nil
+		if query.MaxDistance != 0 && lr.distance >= query.MaxDistance {
+			continue
 		}
 
 		if query.Filters != nil {
 			matches, err := matchesFilter(doc.Metadata, query.Filters)
 			if err != nil || !matches {
-				return nil, nil
+				continue
 			}
 		}
 
-		result := GlowstickQueryResultSet{
-			Id:        doc.Id,
-			Content:   doc.Content,
-			Embedding: doc.Embedding,
-			Metadata:  doc.Metadata,
-			Distance:  distance,
-		}
-
-		return &result, nil
-	}
-
-	// For small result sets, process sequentially
-	if len(ids) <= 3 {
-		for i, id := range ids {
-			doc, err := processDoc(int64(id), distances[i])
-			if err != nil {
-				return nil, err
-			}
-			if doc != nil {
-				docs = append(docs, *doc)
-			}
-		}
-		if s.Logger != nil {
-			duration := time.Since(start)
-			s.Logger.Infow("query_collection_complete", "collection", collection_name, "results", len(docs), "duration_ms", duration.Milliseconds())
-		}
-		return docs, nil
-	}
-
-	// For larger result sets, use parallel processing
-	numWorkers := min(len(ids), 10)
-	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
-
-	type docResult struct {
-		doc   GlowstickQueryResultSet
-		index int
-	}
-
-	resultChan := make(chan docResult, len(ids))
-	var wg sync.WaitGroup
-	var firstErr error
-	var errOnce sync.Once
-
-	for i := range numWorkers {
-		start := i * chunkSize
-		end := min(start+chunkSize, len(ids))
-
-		if start >= len(ids) {
-			break
-		}
-
-		wg.Add(1)
-		go func(startIdx, endIdx int) {
-			defer wg.Done()
-
-			for j := startIdx; j < endIdx; j++ {
-				doc, err := processDoc(int64(ids[j]), distances[j])
-				if err != nil {
-					errOnce.Do(func() { firstErr = err })
-					return
-				}
-				if doc != nil {
-					resultChan <- docResult{doc: *doc, index: j}
-				}
-			}
-		}(start, end)
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	resultSlice := make([]GlowstickQueryResultSet, len(ids))
-	present := make([]bool, len(ids))
-	for result := range resultChan {
-		resultSlice[result.index] = result.doc
-		present[result.index] = true
-	}
-
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
-	for i := range ids {
-		if present[i] {
-			docs = append(docs, resultSlice[i])
-		}
+		docs = append(docs, GlowstickQueryResultSet{
+			Id:       doc.Id,
+			Content:  doc.Content,
+			Metadata: doc.Metadata,
+			Distance: lr.distance,
+		})
 	}
 
 	if s.Logger != nil {
