@@ -228,6 +228,16 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 	database_name := ctx.UserValue("database_name").(string)
 	collection_name := ctx.UserValue("collection_name").(string)
 
+	// Reject oversized payloads before spending CPU on JSON parsing.
+	const maxInsertBodySize = 10 * 1024 * 1024
+	if len(ctx.Request.Body()) > maxInsertBodySize {
+		ctx.SetStatusCode(fasthttp.StatusRequestEntityTooLarge)
+		ctx.SetContentType("application/json")
+		ctx.Write(fmt.Appendf(nil, `{"error":"request body too large: %d bytes exceeds %d byte limit"}`,
+			len(ctx.Request.Body()), maxInsertBodySize))
+		return
+	}
+
 	var soaRequest struct {
 		Ids        []string                 `json:"ids"`
 		Documents  []string                 `json:"documents"`  // Maps to Contents
@@ -268,12 +278,12 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		len(soaRequest.Metadatas) != numDocs {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
 		ctx.SetContentType("application/json")
-		ctx.Write([]byte(fmt.Sprintf(`{"error":"array length mismatch: ids=%d, docs=%d, emb=%d, meta=%d"}`,
-			numDocs, len(soaRequest.Documents), len(soaRequest.Embeddings), len(soaRequest.Metadatas))))
+		ctx.Write(fmt.Appendf(nil, `{"error":"array length mismatch: ids=%d, docs=%d, emb=%d, meta=%d"}`,
+			numDocs, len(soaRequest.Documents), len(soaRequest.Embeddings), len(soaRequest.Metadatas)))
 		return
 	}
 
-	// Validate and flatten embeddings: [][]float32 → []float32
+	// Validate embeddings
 	if numDocs > 0 && len(soaRequest.Embeddings[0]) == 0 {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
 		ctx.SetContentType("application/json")
@@ -288,8 +298,8 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		if len(embedding) != embeddingDim {
 			ctx.SetStatusCode(fasthttp.StatusBadRequest)
 			ctx.SetContentType("application/json")
-			ctx.Write([]byte(fmt.Sprintf(`{"error":"dimension mismatch at index %d: expected %d, got %d"}`,
-				i, embeddingDim, len(embedding))))
+			ctx.Write(fmt.Appendf(nil, `{"error":"dimension mismatch at index %d: expected %d, got %d"}`,
+				i, embeddingDim, len(embedding)))
 			return
 		}
 		copy(flatEmbeddings[i*embeddingDim:(i+1)*embeddingDim], embedding)
@@ -309,7 +319,7 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		Logger:    log,
 	})
 
-	err := db.InsertDocumentsSOA(collection_name, soa)
+	err := db.InsertDocuments(collection_name, soa)
 	if err != nil {
 		handleError(ctx, err)
 		return

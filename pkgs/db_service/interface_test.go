@@ -181,11 +181,11 @@ func TestInsertDocuments(t *testing.T) {
 	}
 
 	start := time.Now()
-	err = dbSvc.InsertDocuments(collName, documents)
+	err = dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents))
 	duration := time.Since(start)
-	t.Logf("InsertDocumentsIntoCollection took: %v\n", duration)
+	t.Logf("InsertDocuments took: %v\n", duration)
 	if err != nil {
-		t.Fatalf("InsertDocumentsIntoCollection returned error: %v", err)
+		t.Fatalf("InsertDocuments returned error: %v", err)
 	}
 
 	collectionDefKey := fmt.Sprintf("%s.%s", dbName, collName)
@@ -245,7 +245,7 @@ func TestInsertDocuments(t *testing.T) {
 }
 
 func TestInsertDocumentsSOA(t *testing.T) {
-	wtService, dbSvc := setupTestDB(t, "InsertDocumentsSOA")
+	wtService, dbSvc := setupTestDB(t, "InsertDocuments_SOA")
 	collName := "test_soa"
 	dbName := "default"
 
@@ -281,12 +281,12 @@ func TestInsertDocumentsSOA(t *testing.T) {
 	}
 
 	start := time.Now()
-	err = dbSvc.InsertDocumentsSOA(collName, soa)
+	err = dbSvc.InsertDocuments(collName, soa)
 	duration := time.Since(start)
-	t.Logf("InsertDocumentsSOA took: %v", duration)
+	t.Logf("InsertDocuments took: %v", duration)
 
 	if err != nil {
-		t.Fatalf("InsertDocumentsSOA returned error: %v", err)
+		t.Fatalf("InsertDocuments returned error: %v", err)
 	}
 
 	// Verify documents were inserted correctly
@@ -346,7 +346,7 @@ func TestInsertDocumentsSOA(t *testing.T) {
 	}
 }
 
-func TestInsertDocumentsSOA_ValidationErrors(t *testing.T) {
+func TestInsertDocuments_ValidationErrors(t *testing.T) {
 	_, dbSvc := setupTestDB(t, "SOA_Validation")
 	collName := "test_validation"
 
@@ -409,7 +409,7 @@ func TestInsertDocumentsSOA_ValidationErrors(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := dbSvc.InsertDocumentsSOA(collName, tc.soa)
+			err := dbSvc.InsertDocuments(collName, tc.soa)
 			if err == nil {
 				t.Errorf("expected error containing %q, got nil", tc.expectErr)
 			} else if !strings.Contains(err.Error(), tc.expectErr) {
@@ -437,8 +437,8 @@ func TestBasicVectorQuery(t *testing.T) {
 		}
 	}
 
-	if err := dbSvc.InsertDocuments(collName, documents); err != nil {
-		t.Fatalf("InsertDocumentsIntoCollection returned error: %v", err)
+	if err := dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents)); err != nil {
+		t.Fatalf("InsertDocuments returned error: %v", err)
 	}
 
 	t.Cleanup(func() {
@@ -558,7 +558,7 @@ func TestMetadataFiltering(t *testing.T) {
 		},
 	}
 
-	if err := dbSvc.InsertDocuments(collName, documents); err != nil {
+	if err := dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents)); err != nil {
 		t.Fatalf("Failed to insert docs: %v", err)
 	}
 

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
+
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -563,176 +563,10 @@ func (s *GDBService) GetCollection(collection_name string) (CollectionEntry, err
 	}, nil
 }
 
-func (s *GDBService) InsertDocuments(collection_name string, documents []GlowstickDocument) error {
+func (s *GDBService) InsertDocuments(collection_name string, documents *GlowstickDocumentSOA) error {
 	start := time.Now()
 	if s.Logger != nil {
-		s.Logger.Infow("insert_documents_start", "collection", collection_name, "doc_count", len(documents))
-	}
-
-	if len(documents) == 0 {
-		return InvalidInput_Err(ErrEmptyDocuments)
-	}
-
-	kv := s.KvService
-
-	collectionDefKey := fmt.Sprintf("%s.%s", s.Name, collection_name)
-	val, exists, err := kv.GetBinary(CATALOG, []byte(collectionDefKey))
-
-	if !exists {
-		return NotFound_Err(ErrCollectionNotFound)
-	}
-
-	if err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
-	}
-
-	var collection CollectionCatalogEntry
-	if err := bson.Unmarshal(val, &collection); err != nil {
-		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
-	}
-
-	vectorIndexFilePath := collection.VectorIndexUri
-
-	// Validate first document has embedding before getting/creating index
-	if len(documents[0].Embedding) == 0 {
-		return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", documents[0].Id))
-	}
-
-	indexCache := faiss.GlobalIndexCache()
-	cachedIdx, err := indexCache.GetOrCreate(vectorIndexFilePath, len(documents[0].Embedding))
-	if err != nil {
-		return Internal_Err(Wrap_Err(err, "failed to get or create vector index"))
-	}
-
-	// Lock the index during writes.
-	cachedIdx.Lock()
-	defer cachedIdx.Unlock()
-
-	idx := cachedIdx.Index
-	destTableURI := collection.TableUri
-
-	startLabel, err := idx.NTotal()
-	if err != nil {
-		return Internal_Err(Wrap_Err(err, "failed to get index size"))
-	}
-
-	// Process embeddings for vector index
-	numDocs := len(documents)
-	var embeddingDim int
-	var embeddings []float32
-	labelMappings := make([]string, numDocs)
-
-	// Use batch writer for document inserts (single session for all writes)
-	docWriter, err := s.KvService.NewBatchWriter(destTableURI, wt.VALUE_FORMAT_BINARY)
-	if err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to create batch writer for documents"))
-	}
-	defer docWriter.Close()
-
-	for i, doc := range documents {
-		if len(doc.Embedding) == 0 {
-			return InvalidInput_Err(fmt.Errorf("document with ID:%s has empty embedding", doc.Id))
-		}
-
-		if i == 0 {
-			embeddingDim = len(doc.Embedding)
-			embeddings = make([]float32, numDocs*embeddingDim)
-		} else if len(doc.Embedding) != embeddingDim {
-			return InvalidInput_Err(fmt.Errorf("document %s has embedding dimension %d, expected %d", doc.Id, len(doc.Embedding), embeddingDim))
-		}
-
-		doc_bytes, release, err := BsonMarshalWithPool(doc)
-		release()
-
-		if err != nil {
-			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
-		}
-
-		key := []byte(doc.Id)
-		if err := docWriter.PutBinary(key, doc_bytes); err != nil {
-			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
-		}
-
-		// Put embedding data from current doc in embeddings array.
-		// Note: We can skip this extra copy if we switch the API to use SOA pattern.
-		copy(embeddings[i*embeddingDim:(i+1)*embeddingDim], doc.Embedding)
-		labelMappings[i] = doc.Id
-	}
-
-	if err := docWriter.Commit(); err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to commit document batch"))
-	}
-
-	if err := idx.Add(embeddings, len(documents)); err != nil {
-		return Internal_Err(Wrap_Err(err, "failed to add embeddings to index"))
-	}
-
-	// Use batch writer for label mappings (single session for all writes)
-	labelWriter, err := s.KvService.NewBatchWriter(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, wt.VALUE_FORMAT_STRING)
-	if err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to create batch writer for labels"))
-	}
-	defer labelWriter.Close()
-
-	for i, docID := range labelMappings {
-		label := startLabel + int64(i)
-		if err := labelWriter.PutString(fmt.Sprintf("%d", label), docID); err != nil {
-			return Storage_Err(Wrap_Err(err, "failed to write label->docID mapping for label %d", label))
-		}
-	}
-
-	// Commit label batch
-	if err := labelWriter.Commit(); err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to commit label batch"))
-	}
-
-	// Write index
-	if err := idx.WriteToFile(vectorIndexFilePath); err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to write index to file"))
-	}
-	cachedIdx.Dirty = false
-
-	info, err := os.Stat(vectorIndexFilePath)
-	if err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to stat vector index file"))
-	}
-
-	hot_stats, statsExists, err := kv.GetBinary(STATS, []byte(collectionDefKey))
-	if err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to fetch hot stats"))
-	}
-	if !statsExists {
-		return Storage_Err(fmt.Errorf("collection stats not found for %s", collectionDefKey))
-	}
-
-	var hot_stats_doc CollectionStats
-	if err := bson.Unmarshal(hot_stats, &hot_stats_doc); err != nil {
-		return Serialization_Err(Wrap_Err(err, "failed to unmarshal hot stats"))
-	}
-
-	hot_stats_doc.Doc_Count += int(len(documents))
-	hot_stats_doc.Vector_Index_Size = float64(info.Size())
-
-	hot_stats_doc_bytes, err := bson.Marshal(hot_stats_doc)
-	if err != nil {
-		return Serialization_Err(Wrap_Err(err, "failed to marshal hot stats"))
-	}
-
-	if err := kv.PutBinary(STATS, []byte(collectionDefKey), hot_stats_doc_bytes); err != nil {
-		return Storage_Err(Wrap_Err(err, "failed to write hot stats"))
-	}
-
-	if s.Logger != nil {
-		duration := time.Since(start)
-		s.Logger.Infow("insert_documents_complete", "collection", collection_name, "doc_count", len(documents), "duration_ms", duration.Milliseconds())
-	}
-	return nil
-}
-
-func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *GlowstickDocumentSOA) error {
-	start := time.Now()
-	if s.Logger != nil {
-		s.Logger.Infow("insert_documents_soa_start", "collection", collection_name, "doc_count", documents.DocumentCount())
+		s.Logger.Infow("insert_documents_start", "collection", collection_name, "doc_count", documents.DocumentCount())
 	}
 
 	// Validate input structure
@@ -799,16 +633,17 @@ func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *Glows
 		}
 
 		doc_bytes, release, err := BsonMarshalWithPool(doc)
-		defer release()
-
 		if err != nil {
+			release()
 			return Serialization_Err(Wrap_Err(err, "failed to marshal document %s", doc.Id))
 		}
 
 		key := []byte(doc.Id)
 		if err := docWriter.PutBinary(key, doc_bytes); err != nil {
+			release()
 			return Storage_Err(Wrap_Err(err, "failed to insert document %s at index %d", doc.Id, i))
 		}
+		release()
 	}
 
 	if err := docWriter.Commit(); err != nil {
@@ -877,7 +712,7 @@ func (s *GDBService) InsertDocumentsSOA(collection_name string, documents *Glows
 
 	if s.Logger != nil {
 		duration := time.Since(start)
-		s.Logger.Infow("insert_documents_soa_complete", "collection", collection_name, "doc_count", numDocs, "duration_ms", duration.Milliseconds())
+		s.Logger.Infow("insert_documents_complete", "collection", collection_name, "doc_count", numDocs, "duration_ms", duration.Milliseconds())
 	}
 	return nil
 }
@@ -945,133 +780,94 @@ func (s *GDBService) QueryCollection(collection_name string, query QueryStruct) 
 		return docs, nil
 	}
 
-	// Helper function to process a single document.
-	// Returns (nil, nil) when a document is legitimately skipped (not found, filtered out).
-	// Returns (nil, err) on actual storage/deserialization failures.
-	processDoc := func(id int64, distance float32) (*GlowstickQueryResultSet, error) {
-		key := strconv.FormatInt(id, 10)
+	// Phase 1: Resolve label→docID mappings (cache-first, batch-fallback)
+	lc := GlobalLabelCache()
+	type labelResult struct {
+		docID    string
+		distance float32
+	}
+	resolved := make([]labelResult, 0, len(ids))
 
-		val, exists, err := kv.GetString(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, key)
-		if err != nil {
-			return nil, Storage_Err(Wrap_Err(err, "failed to get label mapping for label %d", id))
-		}
-		if !exists {
-			return nil, nil
-		}
+	// Indices of ids that missed the cache and need a WT lookup
+	type cacheMiss struct {
+		label    int64
+		idsIndex int // position in ids/distances
+	}
+	var misses []cacheMiss
 
-		docIDBytes := []byte(val)
-		docBin, exists, err := kv.GetBinary(collection.TableUri, docIDBytes)
+	for i, id := range ids {
+		label := int64(id)
+		if docID, ok := lc.Get(collection.TableUri, label); ok {
+			resolved = append(resolved, labelResult{docID: docID, distance: distances[i]})
+		} else {
+			misses = append(misses, cacheMiss{label: label, idsIndex: i})
+		}
+	}
+
+	// Batch-read any cache misses
+	if len(misses) > 0 {
+		labelReader, err := kv.NewBatchReader(LABELS_TO_DOC_ID_MAPPING_TABLE_URI, wt.VALUE_FORMAT_STRING)
 		if err != nil {
-			return nil, Storage_Err(Wrap_Err(err, "failed to get document %s", val))
+			return nil, Storage_Err(Wrap_Err(err, "failed to open label batch reader"))
+		}
+		defer labelReader.Close()
+
+		for _, m := range misses {
+			key := strconv.FormatInt(m.label, 10)
+			val, exists, err := labelReader.GetString(key)
+			if err != nil {
+				return nil, Storage_Err(Wrap_Err(err, "failed to get label mapping for label %d", m.label))
+			}
+			if !exists {
+				continue
+			}
+			lc.Put(collection.TableUri, m.label, val)
+			resolved = append(resolved, labelResult{docID: val, distance: distances[m.idsIndex]})
+		}
+	}
+
+	if len(resolved) == 0 {
+		return docs, nil
+	}
+
+	// Phase 2: Batch-read all documents (single session/cursor)
+	docReader, err := kv.NewBatchReader(collection.TableUri, wt.VALUE_FORMAT_BINARY)
+	if err != nil {
+		return nil, Storage_Err(Wrap_Err(err, "failed to open document batch reader"))
+	}
+	defer docReader.Close()
+
+	for _, lr := range resolved {
+		docBin, exists, err := docReader.GetBinary([]byte(lr.docID))
+		if err != nil {
+			return nil, Storage_Err(Wrap_Err(err, "failed to get document %s", lr.docID))
 		}
 		if !exists || len(docBin) == 0 {
-			return nil, nil
+			continue
 		}
 
-		var doc GlowstickDocument
-		if err := bson.Unmarshal(docBin, &doc); err != nil {
-			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal document %s", val))
+		doc, err := unmarshalQueryDoc(docBin)
+		if err != nil {
+			return nil, Serialization_Err(Wrap_Err(err, "failed to unmarshal document %s", lr.docID))
 		}
 
-		if query.MaxDistance != 0 && distance >= query.MaxDistance {
-			return nil, nil
+		if query.MaxDistance != 0 && lr.distance >= query.MaxDistance {
+			continue
 		}
 
 		if query.Filters != nil {
 			matches, err := matchesFilter(doc.Metadata, query.Filters)
 			if err != nil || !matches {
-				return nil, nil
+				continue
 			}
 		}
 
-		result := GlowstickQueryResultSet{
-			Id:        doc.Id,
-			Content:   doc.Content,
-			Embedding: doc.Embedding,
-			Metadata:  doc.Metadata,
-			Distance:  distance,
-		}
-
-		return &result, nil
-	}
-
-	// For small result sets, process sequentially
-	if len(ids) <= 3 {
-		for i, id := range ids {
-			doc, err := processDoc(int64(id), distances[i])
-			if err != nil {
-				return nil, err
-			}
-			if doc != nil {
-				docs = append(docs, *doc)
-			}
-		}
-		if s.Logger != nil {
-			duration := time.Since(start)
-			s.Logger.Infow("query_collection_complete", "collection", collection_name, "results", len(docs), "duration_ms", duration.Milliseconds())
-		}
-		return docs, nil
-	}
-
-	// For larger result sets, use parallel processing
-	numWorkers := min(len(ids), 10)
-	chunkSize := (len(ids) + numWorkers - 1) / numWorkers
-
-	type docResult struct {
-		doc   GlowstickQueryResultSet
-		index int
-	}
-
-	resultChan := make(chan docResult, len(ids))
-	var wg sync.WaitGroup
-	var firstErr error
-	var errOnce sync.Once
-
-	for i := range numWorkers {
-		start := i * chunkSize
-		end := min(start+chunkSize, len(ids))
-
-		if start >= len(ids) {
-			break
-		}
-
-		wg.Add(1)
-		go func(startIdx, endIdx int) {
-			defer wg.Done()
-
-			for j := startIdx; j < endIdx; j++ {
-				doc, err := processDoc(int64(ids[j]), distances[j])
-				if err != nil {
-					errOnce.Do(func() { firstErr = err })
-					return
-				}
-				if doc != nil {
-					resultChan <- docResult{doc: *doc, index: j}
-				}
-			}
-		}(start, end)
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	resultSlice := make([]GlowstickQueryResultSet, len(ids))
-	present := make([]bool, len(ids))
-	for result := range resultChan {
-		resultSlice[result.index] = result.doc
-		present[result.index] = true
-	}
-
-	if firstErr != nil {
-		return nil, firstErr
-	}
-
-	for i := range ids {
-		if present[i] {
-			docs = append(docs, resultSlice[i])
-		}
+		docs = append(docs, GlowstickQueryResultSet{
+			Id:       doc.Id,
+			Content:  doc.Content,
+			Metadata: doc.Metadata,
+			Distance: lr.distance,
+		})
 	}
 
 	if s.Logger != nil {

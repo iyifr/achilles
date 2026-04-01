@@ -93,6 +93,28 @@ func (soa *GlowstickDocumentSOA) DocumentCount() int {
 	return len(soa.Ids)
 }
 
+// NewGlowstickDocumentSOA converts a slice of GlowstickDocument into SOA format.
+func NewGlowstickDocumentSOA(docs []GlowstickDocument) *GlowstickDocumentSOA {
+	n := len(docs)
+	if n == 0 {
+		return &GlowstickDocumentSOA{}
+	}
+	dim := len(docs[0].Embedding)
+	soa := &GlowstickDocumentSOA{
+		Ids:        make([]string, n),
+		Contents:   make([]string, n),
+		Embeddings: make([]float32, n*dim),
+		Metadatas:  make([]map[string]interface{}, n),
+	}
+	for i, d := range docs {
+		soa.Ids[i] = d.Id
+		soa.Contents[i] = d.Content
+		soa.Metadatas[i] = d.Metadata
+		copy(soa.Embeddings[i*dim:(i+1)*dim], d.Embedding)
+	}
+	return soa
+}
+
 type QueryStruct struct {
 	TopK           int32
 	MaxDistance    float32
@@ -129,8 +151,7 @@ type DBService interface {
 	CreateCollection(collection_name string) error
 	DeleteCollection(collection_name string) error
 	GetCollection(collection_name string) (CollectionEntry, error)
-	InsertDocuments(collection_name string, documents []GlowstickDocument) error
-	InsertDocumentsSOA(collection_name string, documents *GlowstickDocumentSOA) error
+	InsertDocuments(collection_name string, documents *GlowstickDocumentSOA) error
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
 	DeleteDocuments(collection_name string, documentIds []string) ([]string, error)
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickQueryResultSet, error)
