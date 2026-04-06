@@ -434,7 +434,7 @@ class TestSyncDocumentApiUrls:
         assert _url_arg(self.http.put) == self.base
 
     def test_delete_documents_url(self):
-        self.http.delete.return_value = DeleteDocumentsRes(message="ok")
+        self.http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
         self.api.delete_documents(_delete_input())
         assert _url_arg(self.http.delete) == self.base
 
@@ -464,7 +464,7 @@ class TestSyncDocumentApiUrls:
         self.http.post.assert_not_called()
 
     def test_delete_documents_uses_delete(self):
-        self.http.delete.return_value = DeleteDocumentsRes(message="ok")
+        self.http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
         self.api.delete_documents(_delete_input())
         self.http.delete.assert_called_once()
 
@@ -480,7 +480,7 @@ class TestSyncDocumentApiUrls:
         self.http.get.return_value = GetDocumentsRes(documents=[], doc_count=0)
         self.http.post.return_value = InsertDocumentsRes(message="ok")
         self.http.put.return_value = UpdateDocumentsRes(message="ok")
-        self.http.delete.return_value = DeleteDocumentsRes(message="ok")
+        self.http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
 
         self.api.get_documents()
         self.api.insert_documents(_insert_input())
@@ -581,7 +581,7 @@ class TestAsyncDocumentApiUrls:
     def test_delete_documents_uses_delete(self):
         async def run():
             http = _async_http()
-            http.delete = AsyncMock(return_value=DeleteDocumentsRes(message="ok"))
+            http.delete = AsyncMock(return_value=DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"]))
             api = self._make_api(http)
             await api.delete_documents(_delete_input())
             http.delete.assert_called_once()

@@ -646,36 +646,36 @@ class TestUpdateDocuments:
 
 class TestDeleteDocuments:
 
-    def test_sync_delete_returns_none(self):
+    def test_sync_delete_returns_dict(self):
         coll, mock_http = _make_sync_collection()
-        mock_http.delete.return_value = DeleteDocumentsRes(message="deleted")
+        mock_http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
 
         result = coll.delete_documents(document_ids=["doc1", "doc2"])
-        assert result is None
+        assert result == {"deleted_count": 1, "deleted_ids": ["mock_doc_id"]}
 
     def test_sync_delete_calls_http_delete(self):
         coll, mock_http = _make_sync_collection()
-        mock_http.delete.return_value = DeleteDocumentsRes(message="deleted")
+        mock_http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
 
         coll.delete_documents(document_ids=["doc1"])
         mock_http.delete.assert_called_once()
 
-    def test_async_delete_returns_none(self):
+    def test_async_delete_returns_dict(self):
         async def run():
             coll, mock_http = _make_async_collection()
             mock_http.delete = AsyncMock(
-                return_value=DeleteDocumentsRes(message="deleted")
+                return_value=DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
             )
 
             result = await coll.delete_documents(document_ids=["doc1"])
-            assert result is None
+            assert result == {"deleted_count": 1, "deleted_ids": ["mock_doc_id"]}
 
         asyncio.run(run())
 
     def test_sync_delete_empty_list_still_calls_server(self):
         # deleting an empty list is caller's choice — SDK should not gate it
         coll, mock_http = _make_sync_collection()
-        mock_http.delete.return_value = DeleteDocumentsRes(message="deleted")
+        mock_http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
 
         coll.delete_documents(document_ids=[])
         mock_http.delete.assert_called_once()

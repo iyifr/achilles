@@ -80,8 +80,10 @@ class TestSyncCollectionIntegration:
             embeddings=[self.emb["apple"], self.emb["banana"]],
             metadatas=[{}, {}],
         )
-        collection.delete_documents(document_ids=["doc-1"])
+        res = collection.delete_documents(document_ids=["doc-1"])
         assert collection.count() == 1
+        assert res["deleted_count"] == 1
+        assert "doc-1" in res["deleted_ids"]
 
     def test_delete_multiple_documents(self, collection):
         collection.add_documents(
@@ -90,12 +92,14 @@ class TestSyncCollectionIntegration:
             embeddings=[self.emb["apple"], self.emb["banana"], self.emb["cherry"]],
             metadatas=[{}, {}, {}],
         )
-        collection.delete_documents(document_ids=["doc-1", "doc-2"])
+        res = collection.delete_documents(document_ids=["doc-1", "doc-2"])
         remaining = collection.get_documents()
         ids = [d["id"] for d in remaining]
         assert "doc-1" not in ids
         assert "doc-2" not in ids
         assert "doc-3" in ids
+        assert res["deleted_count"] == 2
+        assert set(res["deleted_ids"]) == {"doc-1", "doc-2"}
 
     def test_add_documents_mismatched_lengths_raises(self, collection):
         with pytest.raises((ValueError, AchillesError)):

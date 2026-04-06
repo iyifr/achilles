@@ -299,11 +299,12 @@ class DeleteDocumentsReqInput(BaseModel):
     document_ids: list[str] = Field(description="List of document IDs to delete")
 
 
-class DeleteDocumentsRes(MessageResponse):
+class DeleteDocumentsRes(BaseModel):
     """
     DELETE /database/{database_name}/collections/{collection_name}/documents
     """
-    ...
+    deleted_count: int = Field(description="Number of deleted documents")
+    deleted_ids: list[str] = Field(default_factory=list, description="IDs of deleted documents")
 
 
 class QueryReq(BaseModel):

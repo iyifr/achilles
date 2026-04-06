@@ -15,3 +15,7 @@ class GetDocDict(TypedDict):
     id: str
     content: str
     metadata: dict[str, Any]
+
+class DeleteDocDict(TypedDict):
+    deleted_count: int
+    deleted_ids: list[str]

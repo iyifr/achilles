@@ -17,7 +17,7 @@ from achillesdb.schemas import (
     UpdateDocumentsReqInput, UpdateDocumentsRes,
     WhereClause,
 )
-from achillesdb.types import EmbeddingFn, GetDocDict, QueryDocDict
+from achillesdb.types import EmbeddingFn, GetDocDict, QueryDocDict, DeleteDocDict
 
 
 class CollectionImpl:
@@ -250,8 +250,9 @@ class SyncCollection(CollectionImpl):
     def delete_documents(
         self,
         document_ids: list[str],
-    ) -> None:
-        self._delete_documents(document_ids)
+    ) -> DeleteDocDict:
+        res = cast(DeleteDocumentsRes, self._delete_documents(document_ids))
+        return cast(DeleteDocDict, res.model_dump())
 
     def query(
         self,
@@ -326,8 +327,9 @@ class AsyncCollection(CollectionImpl):
     async def delete_documents(
         self,
         document_ids: list[str],
-    ) -> None:
-        await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(document_ids))
+    ) -> DeleteDocDict:
+        res = await cast(Awaitable[DeleteDocumentsRes], self._delete_documents(document_ids))
+        return cast(DeleteDocDict, res.model_dump())
 
     async def query(
         self,

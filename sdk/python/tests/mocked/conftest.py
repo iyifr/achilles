@@ -150,4 +150,4 @@ def fake_update_res():
 
 @pytest.fixture
 def fake_delete_documents_res():
-    return DeleteDocumentsRes(message="documents deleted")
+    return DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])

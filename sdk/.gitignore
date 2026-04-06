@@ -1,3 +1,4 @@
 repomix-output.xml
 # python
 __pycache__/
+python/uv.lock
