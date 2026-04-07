@@ -187,7 +187,7 @@ AchillesDB has two core components:
 1. **Document Store**: WiredTiger KV store holds BSON bytes (on disk json document representation).
 2. **Vector Search**: FAISS vector search toolkit for efficient vector search.
 
-The system composes these two components through a label mapping table that connects FAIS sequential embedding IDs to document IDs in wiredtiger, enabling hybrid search with both semantic similarity and metadata filtering.
+The system connects the two layers through a label mapping object that connects FAISS sequential embedding IDs to document IDs in wiredtiger.
 
 For detailed architecture diagrams and data flow, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
