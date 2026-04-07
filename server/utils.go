@@ -20,17 +20,7 @@ func getOptimalCacheSizeMB() int {
 		}
 	}
 
-	totalMB := int(totalSystemMemory() / (1024 * 1024))
-	optimalCache := totalMB / 10 // 10% of system RAM
-
-	if optimalCache < 64 {
-		optimalCache = 64
-	}
-	if optimalCache > 1024 {
-		optimalCache = 1024
-	}
-
-	return optimalCache
+	return 1228
 }
 
 func ensureDirectory(path string) error {
@@ -40,22 +30,12 @@ func ensureDirectory(path string) error {
 	return nil
 }
 
-func initializeDirectories() error {
-	errChan := make(chan error, 2)
-
-	go func() {
-		errChan <- ensureDirectory(WIREDTIGER_DIR)
-	}()
-
-	go func() {
-		errChan <- ensureDirectory(VECTORS_DIR)
-	}()
-
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return err
-		}
+func createDataVolumes() error {
+	if err := ensureDirectory(WIREDTIGER_DIR); err != nil {
+		return err
 	}
-
+	if err := ensureDirectory(VECTORS_DIR); err != nil {
+		return err
+	}
 	return nil
 }

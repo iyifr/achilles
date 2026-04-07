@@ -40,7 +40,7 @@ func setupTestDB(t *testing.T, dirName string) (wt.WTService, DBService) {
 	}
 
 	// Initialize tables
-	if err := InitTablesHelper(wtService); err != nil {
+	if err := InitTables(wtService); err != nil {
 		wtService.Close()
 		os.RemoveAll(testDir)
 		os.RemoveAll(vectorsDir)

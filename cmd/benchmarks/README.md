@@ -15,6 +15,7 @@ go test -bench=BenchmarkInsert/100docs_1536dim -benchmem ./cmd/benchmarks/
 go test -bench=. -benchmem -count=5 ./cmd/benchmarks/
 ```
 
+
 ## Profiling
 
 ```bash

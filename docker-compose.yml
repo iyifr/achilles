@@ -16,7 +16,7 @@ services:
     ports:
       - "8180:8180"
     volumes:
-      # Persist database data between container restarts
+      # Persist database data
       - achilles_wiredtiger:/data/wiredtiger
       - achilles_vectors:/data/vectors
     environment:

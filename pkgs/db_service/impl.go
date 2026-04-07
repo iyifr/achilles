@@ -1141,7 +1141,7 @@ func (s *GDBService) DeleteDocuments(collection_name string, documentIds []strin
 	return deletedIds, nil
 }
 
-func InitTablesHelper(wtService wt.WTService) error {
+func InitTables(wtService wt.WTService) error {
 	tables := map[string]string{
 		CATALOG:                            "key_format=u,value_format=u,exclusive=true",
 		STATS:                              "key_format=u,value_format=u,exclusive=true",

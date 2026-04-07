@@ -15,7 +15,7 @@ type GlowstickDocumentPayload struct {
 	Id        string                 `json:"id"`
 	Content   string                 `json:"content"`
 	Embedding []float32              `json:"embedding"`
-	Metadata  map[string]interface{} `json:"metadata"` // Any JSON-serializable type
+	Metadata  map[string]interface{} `json:"metadata"`
 }
 
 type QueryResponse struct {
