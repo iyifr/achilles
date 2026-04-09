@@ -3,3 +3,35 @@ WT_HOME*
 header-file/
 headers/
 scripts/test-data/doc-corpus/
+# Generated/repomix artifacts
+repomix-output.xml
+NOTE.md
+sdk/python/.TODO
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.coverage
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+venv/
+
+# UV
+.python-version
+uv.lock
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.tox/
+
+# Editor/OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
