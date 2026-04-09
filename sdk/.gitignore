@@ -2,3 +2,5 @@ repomix-output.xml
 # python
 __pycache__/
 python/uv.lock
+python/test_sync.py
+python/test_async.py

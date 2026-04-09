@@ -122,13 +122,11 @@ class CollectionImpl:
     def _update_document(
         self,
         document_id: str,
-        where: dict[str, Any],
         updates: dict[str, Any],
     ) -> UpdateDocumentsRes | Awaitable[UpdateDocumentsRes]:
         return self._documents_api.update_documents(
             UpdateDocumentsReqInput(
                 document_id=document_id,
-                where=where,
                 updates=updates,
             )
         )
@@ -237,14 +235,13 @@ class SyncCollection(CollectionImpl):
             doc.model_dump(exclude_unset=True) for doc in documents.documents
         ]
 
-    def update_documents(
+    def update_document(
         self,
         document_id: str,
-        where: dict[str, Any],
         updates: dict[str, Any],
     ) -> None:
         self._update_document(
-            document_id, where, updates
+            document_id, updates
         )
 
     def delete_documents(
@@ -314,14 +311,13 @@ class AsyncCollection(CollectionImpl):
             doc.model_dump(exclude_unset=True) for doc in documents.documents
         ]
 
-    async def update_documents(
+    async def update_document(
         self,
         document_id: str,
-        where: dict[str, Any],
         updates: dict[str, Any],
     ) -> None:
         await cast(Awaitable[UpdateDocumentsRes], self._update_document(
-            document_id, where, updates
+            document_id, updates
         ))
 
     async def delete_documents(

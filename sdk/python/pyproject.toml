@@ -7,7 +7,6 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    "requests>=2.28",
     "httpx>=0.24",
 ]
 

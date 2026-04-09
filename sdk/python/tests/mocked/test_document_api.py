@@ -31,7 +31,6 @@ def make_insert_input():
 def make_update_input():
     return UpdateDocumentsReqInput(
         document_id="doc-1",
-        where={},
         updates={"popular": False, "reviewed": True},
     )
 
@@ -154,10 +153,10 @@ class TestSyncDocumentApi:
         api.update_documents(make_update_input())
         assert mock_sync_http.put.call_args[1]["json"]["updates"] == {"popular": False, "reviewed": True}
 
-    def test_update_documents_payload_contains_where(self, api, mock_sync_http, fake_update_res):
+    def test_update_documents_payload_does_not_contain_where(self, api, mock_sync_http, fake_update_res):
         mock_sync_http.put.return_value = fake_update_res
         api.update_documents(make_update_input())
-        assert "where" in mock_sync_http.put.call_args[1]["json"]
+        assert "where" not in mock_sync_http.put.call_args[1]["json"]
 
     def test_update_documents_returns_response(self, api, mock_sync_http, fake_update_res):
         mock_sync_http.put.return_value = fake_update_res

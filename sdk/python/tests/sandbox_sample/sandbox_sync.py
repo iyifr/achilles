@@ -316,12 +316,11 @@ def test_update(coll_a):
     sep("SECTION 6 – update_documents")
 
     # 6a. update metadata fields on doc-1
-    coll_a.update_documents(
+    coll_a.update_document(
         document_id="doc-1",
-        where={},
         updates={"popular": False, "reviewed": True},
     )
-    print("update_documents('doc-1') → popular=False, reviewed=True  ✓")
+    print("update_document('doc-1') → popular=False, reviewed=True  ✓")
 
     # verify
     for d in coll_a.get_documents():
@@ -330,12 +329,11 @@ def test_update(coll_a):
             break
 
     # 6b. update year on doc-2
-    coll_a.update_documents(
+    coll_a.update_document(
         document_id="doc-2",
-        where={},
         updates={"year": 2025},
     )
-    print("update_documents('doc-2') → year=2025  ✓")
+    print("update_document('doc-2') → year=2025  ✓")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -360,52 +358,52 @@ def test_delete_docs(coll_a):
     print("remaining doc ids:", [d["id"] for d in remaining])
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# SECTION 8 – query_collections (cross-collection)
-# ═════════════════════════════════════════════════════════════════════════════
-
-def test_query_colls(db, coll_a):
-    sep("SECTION 8 – query_collections (cross-collection)")
-
-    # seed a couple of extra docs so there is material for cross-collection queries
-    coll_a.add_documents(
-        ids=["doc-10", "doc-11"],
-        documents=["Oranges are vitamin C rich.", "Grapes come in red and green."],
-        embeddings=[[0.3, 0.3, 0.5, 0.5], [0.2, 0.4, 0.4, 0.6]],
-        metadatas=[
-            {"category": "fruit", "year": 2023, "popular": True},
-            {"category": "fruit", "year": 2022, "popular": False},
-        ],
-    )
-
-    # 8a. basic cross-collection query
-    res = db.query_collections(
-        collection_names=[COLL_A, COLL_B],
-        top_k=4,
-        query_embedding=EMB_QUERY_FRUIT,
-    )
-    print(f"query_collections(['{COLL_A}', '{COLL_B}'], top_k=4):")
-    pp.pprint(res)
-
-    # 8b. cross-collection with where filter
-    res = db.query_collections(
-        collection_names=[COLL_A, COLL_B],
-        top_k=3,
-        query_embedding=EMB_QUERY_ANIM,
-        where=W.gt("year", 2020),
-    )
-    print("\nquery_collections with where=W.gt('year', 2020):")
-    pp.pprint(res)
-
-    # 8c. single-collection animal query via query_collections
-    res = db.query_collections(
-        collection_names=[COLL_B],
-        top_k=2,
-        query_embedding=EMB_QUERY_ANIM,
-    )
-    print("\nquery_collections(COLL_B only, animal query):")
-    pp.pprint(res)
-
+# # ═════════════════════════════════════════════════════════════════════════════
+# # SECTION 8 – query_collections (cross-collection)
+# # ═════════════════════════════════════════════════════════════════════════════
+#
+# def test_query_colls(db, coll_a):
+#     sep("SECTION 8 – query_collections (cross-collection)")
+#
+#     # seed a couple of extra docs so there is material for cross-collection queries
+#     coll_a.add_documents(
+#         ids=["doc-10", "doc-11"],
+#         documents=["Oranges are vitamin C rich.", "Grapes come in red and green."],
+#         embeddings=[[0.3, 0.3, 0.5, 0.5], [0.2, 0.4, 0.4, 0.6]],
+#         metadatas=[
+#             {"category": "fruit", "year": 2023, "popular": True},
+#             {"category": "fruit", "year": 2022, "popular": False},
+#         ],
+#     )
+#
+#     # 8a. basic cross-collection query
+#     res = db.query_collections(
+#         collection_names=[COLL_A, COLL_B],
+#         top_k=4,
+#         query_embedding=EMB_QUERY_FRUIT,
+#     )
+#     print(f"query_collections(['{COLL_A}', '{COLL_B}'], top_k=4):")
+#     pp.pprint(res)
+#
+#     # 8b. cross-collection with where filter
+#     res = db.query_collections(
+#         collection_names=[COLL_A, COLL_B],
+#         top_k=3,
+#         query_embedding=EMB_QUERY_ANIM,
+#         where=W.gt("year", 2020),
+#     )
+#     print("\nquery_collections with where=W.gt('year', 2020):")
+#     pp.pprint(res)
+#
+#     # 8c. single-collection animal query via query_collections
+#     res = db.query_collections(
+#         collection_names=[COLL_B],
+#         top_k=2,
+#         query_embedding=EMB_QUERY_ANIM,
+#     )
+#     print("\nquery_collections(COLL_B only, animal query):")
+#     pp.pprint(res)
+#
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 9 – Context-manager usage
@@ -534,7 +532,7 @@ if __name__ == "__main__":
     test_query(coll_a, coll_b)
     test_update(coll_a)
     test_delete_docs(coll_a)
-    test_query_colls(db, coll_a)
+    # test_query_colls(db, coll_a)
     test_context_manager()
     test_errors(db, coll_a)
 

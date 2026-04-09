@@ -271,7 +271,6 @@ class UpdateDocumentsReqInput(BaseModel):
     payload: UpdateDocumentsReqInput
     """
     document_id: str = Field(description="ID of the document to update")
-    where: dict[str, Any] = Field(default={}, description="Filter conditions (reserved for future use)")
     updates: dict[str, Any] = Field(description="Metadata fields to update")
 
 

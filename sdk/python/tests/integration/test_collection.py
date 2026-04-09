@@ -63,9 +63,8 @@ class TestSyncCollectionIntegration:
             embeddings=[self.emb["apple"]],
             metadatas=[{"popular": True}],
         )
-        collection.update_documents(
+        collection.update_document(
             document_id="doc-1",
-            where={},
             updates={"popular": False},
         )
         # verify by fetching

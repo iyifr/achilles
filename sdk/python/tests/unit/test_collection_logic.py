@@ -598,18 +598,17 @@ class TestPeek:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# update_documents
+# update_document
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestUpdateDocuments:
+class TestUpdateDocument:
 
     def test_sync_update_returns_none(self):
         coll, mock_http = _make_sync_collection()
         mock_http.put.return_value = UpdateDocumentsRes(message="updated")
 
-        result = coll.update_documents(
+        result = coll.update_document(
             document_id="doc1",
-            where={},
             updates={"category": "new_value"},
         )
         assert result is None
@@ -618,9 +617,8 @@ class TestUpdateDocuments:
         coll, mock_http = _make_sync_collection()
         mock_http.put.return_value = UpdateDocumentsRes(message="updated")
 
-        coll.update_documents(
+        coll.update_document(
             document_id="doc1",
-            where={},
             updates={"category": "new_value"},
         )
         mock_http.put.assert_called_once()
@@ -630,9 +628,8 @@ class TestUpdateDocuments:
             coll, mock_http = _make_async_collection()
             mock_http.put = AsyncMock(return_value=UpdateDocumentsRes(message="updated"))
 
-            result = await coll.update_documents(
+            result = await coll.update_document(
                 document_id="doc1",
-                where={},
                 updates={"field": "val"},
             )
             assert result is None

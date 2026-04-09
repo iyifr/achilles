@@ -166,28 +166,28 @@ class _HTTPClient:
 
     def _init_sync(self) -> None:
         try:
-            import requests
-            import requests.adapters
+            import httpx
         except ImportError as exc:
             raise ImportError(
-                "requests is required for sync mode. Install with: pip install requests"
+                "httpx is required. Install with: pip install httpx"
             ) from exc
 
-        self._sync_session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=self._conn_cfg.session_pool_connections,
-            pool_maxsize=self._conn_cfg.session_pool_maxsize,
-            max_retries=0,
+        self._sync_client = httpx.Client(
+            base_url=self.base_url,
+            timeout=self.timeout,
+            limits=httpx.Limits(
+                max_connections=self._conn_cfg.session_pool_connections,
+                max_keepalive_connections=self._conn_cfg.session_pool_maxsize,
+                keepalive_expiry=float(self._conn_cfg.session_pool_timeout),
+            ),
         )
-        self._sync_session.mount("http://", adapter)
-        self._sync_session.mount("https://", adapter)
 
     def _init_async(self) -> None:
         try:
             import httpx
         except ImportError as exc:
             raise ImportError(
-                "httpx is required for async mode. Install with: pip install httpx"
+                "httpx is required. Install with: pip install httpx"
             ) from exc
 
         self._async_client = httpx.AsyncClient(
@@ -257,31 +257,30 @@ class _HTTPClient:
         timeout: float | None = None,
         expected_status: int | None = None,
     ) -> ResModel:
-        import requests as req_lib
+        import httpx
 
-        url = self._make_url(path)
         merged_headers = {**self.default_headers, **(headers or {})}
         effective_timeout = timeout if timeout is not None else self.timeout
 
-        self.logger.debug("→ %s %s", method, url)
+        self.logger.debug("→ %s %s", method, path)
 
         try:
-            resp = self._sync_session.request(
+            resp = self._sync_client.request(
                 method,
-                url,
+                path,
                 json=json,
                 params=params,
                 headers=merged_headers,
                 timeout=effective_timeout,
             )
-        except req_lib.exceptions.Timeout as exc:
-            raise AchillesError(message=f"Request timed out: {method} {url}", code=ERROR_CONNECTION) from exc
-        except req_lib.exceptions.ConnectionError as exc:
-            raise AchillesError(message=f"Connection failed: {url}", code=ERROR_CONNECTION) from exc
-        except req_lib.exceptions.RequestException as exc:
+        except httpx.TimeoutException as exc:
+            raise AchillesError(message=f"Request timed out: {method} {path}", code=ERROR_CONNECTION) from exc
+        except httpx.ConnectError as exc:
+            raise AchillesError(message=f"Connection failed: {path}", code=ERROR_CONNECTION) from exc
+        except httpx.RequestError as exc:
             raise AchillesError(message=str(exc), code=ERROR_CONNECTION) from exc
 
-        self.logger.debug("← %s %s  status=%d", method, url, resp.status_code)
+        self.logger.debug("← %s %s  status=%d", method, path, resp.status_code)
         return _parse_response(resp, resType, expected_status)
 
     async def _request_async(
@@ -322,9 +321,9 @@ class _HTTPClient:
 
     def close(self) -> None:
         if self.mode == "sync":
-            self._sync_session.close()
+            self._sync_client.close()
         else:
-            raise ValueError("this is an sync client session mathod and not async")
+            raise ValueError("this is a sync client session method and not async")
 
     async def aclose(self) -> None:
         if self.mode == "async":
