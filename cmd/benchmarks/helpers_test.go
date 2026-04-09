@@ -38,7 +38,7 @@ func setupBenchDB(b *testing.B, dirName string) (wt.WTService, dbservice.DBServi
 		b.Fatalf("Failed to open WiredTiger: %v", err)
 	}
 
-	if err := dbservice.InitTablesHelper(wtService); err != nil {
+	if err := dbservice.InitTables(wtService); err != nil {
 		wtService.Close()
 		os.RemoveAll(testDir)
 		os.RemoveAll(vectorsDir)

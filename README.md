@@ -1,6 +1,6 @@
 # AchillesDB
-Hybrid Vector-document store for agent memory and AI applications.
 
+A performant single node vector database.
 
 ## Quick Start
 
@@ -182,16 +182,14 @@ curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
 
 ### Architecture
 
-AchillesDB combines two core components:
+AchillesDB has two core components:
 
-1. **Document Storage**: WiredTiger + BSON for structured data with complex metadata
-2. **Vector Search**: FAISS for fast similarity search and retrieval
+1. **Document Store**: WiredTiger KV store holds BSON bytes (on disk json document representation).
+2. **Vector Search**: FAISS vector search toolkit for efficient vector search.
 
-The system bridges these through a label mapping table that connects FAISS vector IDs to document IDs, enabling hybrid search with both semantic similarity and metadata filtering.
+The system connects the two layers through a label mapping object that connects FAISS sequential embedding IDs to document IDs in wiredtiger.
 
 For detailed architecture diagrams and data flow, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
-
 
 ## License
 

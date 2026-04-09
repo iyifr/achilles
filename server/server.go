@@ -20,12 +20,6 @@ var (
 	VECTORS_DIR    = getEnvOrDefault("VECTORS_HOME", "volumes/vectors")
 )
 
-// initializeLogger sets up the application logger
-func initializeLogger() (*zap.Logger, *zap.SugaredLogger) {
-	log, sugaredLog := logger.InitLogger()
-	return log, sugaredLog
-}
-
 // Graceful shutdown handler
 func setupSignalHandlers(sugaredLog *zap.SugaredLogger, wtService wt.WTService) {
 	c := make(chan os.Signal, 1)
@@ -43,52 +37,26 @@ func setupSignalHandlers(sugaredLog *zap.SugaredLogger, wtService wt.WTService) 
 // Init Wiredtiger.
 func openWiredTiger() error {
 	cacheSizeMB := getOptimalCacheSizeMB()
-	wtConfig := fmt.Sprintf("create,cache_size=%dMB,eviction=(threads_min=1,threads_max=2),checkpoint=(wait=600)", cacheSizeMB)
+	wtConfig := fmt.Sprintf("create,cache_size=%dMB,eviction=(threads_min=1,threads_max=8),checkpoint=(wait=600)", cacheSizeMB)
 	return wtService.Open(WIREDTIGER_DIR, wtConfig)
 }
 
 func StartServer() {
-	// Initialize directories and logger in parallel
-	var log *zap.Logger
-	var sugaredLog *zap.SugaredLogger
-
-	errChan := make(chan error, 2)
-	logChan := make(chan struct {
-		log        *zap.Logger
-		sugaredLog *zap.SugaredLogger
-	}, 1)
-
-	go func() {
-		errChan <- initializeDirectories()
-	}()
-
-	go func() {
-		l, sl := initializeLogger()
-		logChan <- struct {
-			log        *zap.Logger
-			sugaredLog *zap.SugaredLogger
-		}{l, sl}
-	}()
-
-	// Wait for directory initialization
-	if err := <-errChan; err != nil {
+	if err := createDataVolumes(); err != nil {
 		fmt.Printf("Failed to initialize directories: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Wait for logger initialization
-	logResult := <-logChan
-	log = logResult.log
-	sugaredLog = logResult.sugaredLog
-	defer log.Sync()
+	_, sugaredLog := logger.InitLogger()
+	defer sugaredLog.Sync()
 
+	// Init wiredtiger and wiredtiger tables
 	if err := openWiredTiger(); err != nil {
 		fmt.Printf("Error opening WiredTiger: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Initialize database tables
-	if err := dbservice.InitTablesHelper(wtService); err != nil {
+	if err := dbservice.InitTables(wtService); err != nil {
 		fmt.Printf("Error initializing tables: %v\n", err)
 		os.Exit(1)
 	}
