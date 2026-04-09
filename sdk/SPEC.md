@@ -39,7 +39,6 @@ import { AchillesClient } from "@achillesdb/client";
 const client = new AchillesClient({
   host: "http://localhost",    // default: "http://localhost"
   port: 8180,                  // default: 8180
-  defaultDb: "mydb",           // optional — used when db not specified
   embeddingFunction: async (texts: string[]) => number[][], // optional
   timeout: 30000,              // default: 30000ms
   maxRetries: 3,               // default: 3 — only for idempotent requests
@@ -55,7 +54,6 @@ from achillesdb import AchillesClient
 client = AchillesClient(
     host="http://localhost",       # default
     port=8180,                     # default
-    default_db="mydb",             # optional
     embedding_function=my_embed,   # optional: Callable[[list[str]], list[list[float]]]
     timeout=30,                    # default: 30 seconds
     max_retries=3,                 # default: 3 — only for idempotent requests
@@ -71,7 +69,6 @@ from achillesdb import AsyncAchillesClient
 client = AsyncAchillesClient(
     host="http://localhost",
     port=8180,
-    default_db="mydb",
     embedding_function=my_async_embed,  # async Callable[[list[str]], list[list[float]]]
     timeout=30,
     max_retries=3,
@@ -85,7 +82,6 @@ client = AsyncAchillesClient(
 | ------------------- | ---------------------- | ----------------------------------------- |
 | `host`              | `"http://localhost"`   |                                           |
 | `port`              | `8180`                 |                                           |
-| `defaultDb`         | `undefined` / `None`   | If unset, `db` param required on methods  |
 | `embeddingFunction` | `undefined` / `None`   | Required for text-based query if no queryEmbedding provided |
 | `timeout`           | `30000` ms / `30` sec  | Applies to all HTTP requests              |
 | `maxRetries`        | `3`                    | Only idempotent requests (GET, HEAD, DELETE, OPTIONS) retry |
@@ -211,7 +207,9 @@ const db = await client.createDatabase("mydb");
 const databases: DatabaseInfo[] = await client.listDatabases();
 // DatabaseInfo: { name: string, collectionCount: number, empty: boolean }
 
-// Get existing database handle (no server call)
+// Get database handle (defaults to "default" if no name provided)
+const db = client.database(); 
+// OR
 const db = client.database("mydb");
 
 // Delete database
@@ -226,6 +224,9 @@ db = client.create_database("mydb")
 databases: list[DatabaseInfo] = client.list_databases()
 # DatabaseInfo: name: str, collection_count: int, empty: bool
 
+# Get database handle (defaults to "default" if no name provided)
+db = client.database()
+# OR
 db = client.database("mydb")
 
 client.delete_database("mydb")
@@ -233,7 +234,7 @@ client.delete_database("mydb")
 
 ### Database Handle
 
-`client.database(name)` returns a `Database` object without hitting the server. It's a lightweight namespace handle. Operations on it will fail with `NOT_FOUND` if the database doesn't exist on the server.
+`client.database(name="default")` returns a `Database` object without hitting the server. It's a lightweight namespace handle. If `name` is omitted, it defaults to `"default"`. Operations on it will fail with `NOT_FOUND` if the database doesn't exist on the server.
 
 ---
 
