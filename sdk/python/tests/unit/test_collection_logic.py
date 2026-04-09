@@ -9,8 +9,8 @@ parsing, and real embedding resolution logic are all exercised —
 only the actual network call is replaced.
 
 Covers:
-  - add_documents  (sync + async: embedding resolution, before_insert hook,
-                    validation errors, inspect.isawaitable path)
+  - add_documents  (sync + async: embedding resolution,
+                     validation errors, inspect.isawaitable path)
   - get_documents  (sync + async)
   - query (sync + async: embedding resolution, where normalization)
   - update_documents

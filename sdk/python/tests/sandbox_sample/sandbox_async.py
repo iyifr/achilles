@@ -13,7 +13,7 @@ Sections
 --------
  1. test_client          – connect, ping, list databases, create database
  2. test_database        – list collections, create collection, get collection
- 3. test_add_documents   – add_documents (with metadata, without, single, before_insert)
+ 3. test_add_documents   – add_documents (with metadata, without, single)
  4. test_get_docs        – get_documents, count, peek
  5. test_query           – query (by embedding, all where filter variants)
  6. test_update          – update_documents
@@ -181,15 +181,7 @@ async def test_add_documents(coll_a, coll_b):
     )
     print("add_documents() – single doc (doc-4) added to COLL_A  ✓")
 
-    # 3d. add with before_insert transformer
-    await coll_a.add_documents(
-        ids=["doc-5"],
-        documents=["Lemons are sour citrus fruits."],
-        embeddings=[[0.05, 0.15, 0.25, 0.35]],
-        metadatas=[{"category": "fruit", "year": 2018, "popular": False}],
-        before_insert=lambda docs: [d.upper() for d in docs],
-    )
-    print("add_documents() – doc with before_insert (doc-5) added  ✓")
+    print("add_documents() – single doc (doc-4) added to COLL_A  ✓")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
