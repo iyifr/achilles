@@ -27,7 +27,6 @@ type GetDocumentsResponse struct {
 	DocCount  int                           `json:"doc_count"`
 }
 
-// getLogger extracts logger from request context or returns global logger
 func getLogger(ctx *fasthttp.RequestCtx) *zap.SugaredLogger {
 	if logVal := ctx.UserValue("logger"); logVal != nil {
 		return logVal.(*zap.SugaredLogger)
@@ -57,26 +56,43 @@ func handleError(ctx *fasthttp.RequestCtx, err error) {
 	ctx.Write(fmt.Appendf(nil, `{"error":"%s"}`, dbErr.Error()))
 }
 
+// ServerRouteHandler chains middlewares for a given handler.
+// Usage: ServerRouteHandler(finalHandler, mw1, mw2, ...)
+func ServerRouteHandler(
+	handler fasthttp.RequestHandler,
+	middlewares ...func(fasthttp.RequestHandler) fasthttp.RequestHandler,
+) fasthttp.RequestHandler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		handler = middlewares[i](handler)
+	}
+	return handler
+}
+
 func Router() *router.Router {
 	r := router.New()
 
+	// Define app-wide middleware
+	EndpointLogger := LoggingMiddleware
+
 	// OpenAPI documentation routes
-	r.GET("/docs", LoggingMiddleware(SwaggerUIHandler))
-	r.GET("/api/v1/openapi.yaml", LoggingMiddleware(OpenAPISpecHandler))
+	r.GET("/docs", ServerRouteHandler(SwaggerUIHandler, EndpointLogger))
+	r.GET("/api/v1/openapi.yaml", ServerRouteHandler(OpenAPISpecHandler, EndpointLogger))
 
 	apiV1 := r.Group("/api/v1")
-	apiV1.POST("/database", LoggingMiddleware(CreateDB))
-	apiV1.GET("/databases", LoggingMiddleware(ListDatabasesHandler))
-	apiV1.DELETE("/database/{database_name}", LoggingMiddleware(DeleteDBHandler))
-	apiV1.POST("/database/{database_name}/collections", LoggingMiddleware(CreateCollection))
-	apiV1.GET("/database/{database_name}/collections", LoggingMiddleware(ListCollections))
-	apiV1.DELETE("/database/{database_name}/collections/{collection_name}", LoggingMiddleware(DeleteCollectionHandler))
-	apiV1.GET("/database/{database_name}/collections/{collection_name}", LoggingMiddleware(GetCollection))
-	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(InsertDocumentsHndlr))
-	apiV1.GET("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(GetDocumentsHandler))
-	apiV1.DELETE("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(DeleteDocumentsHandler))
-	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents/query", LoggingMiddleware(QueryDocumentsHandler))
-	apiV1.PUT("/database/{database_name}/collections/{collection_name}/documents", LoggingMiddleware(UpdateDocumentsHandler))
+
+	apiV1.POST("/database", ServerRouteHandler(CreateDB, EndpointLogger))
+	apiV1.GET("/databases", ServerRouteHandler(ListDatabasesHandler, EndpointLogger))
+	apiV1.DELETE("/database/{database_name}", ServerRouteHandler(DeleteDBHandler, EndpointLogger))
+	apiV1.POST("/database/{database_name}/collections", ServerRouteHandler(CreateCollection, EndpointLogger))
+	apiV1.GET("/database/{database_name}/collections", ServerRouteHandler(ListCollections, EndpointLogger))
+	apiV1.DELETE("/database/{database_name}/collections/{collection_name}", ServerRouteHandler(DeleteCollectionHandler, EndpointLogger))
+	apiV1.GET("/database/{database_name}/collections/{collection_name}", ServerRouteHandler(GetCollection, EndpointLogger))
+	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents", ServerRouteHandler(InsertDocumentsHndlr, EndpointLogger))
+	apiV1.GET("/database/{database_name}/collections/{collection_name}/documents", ServerRouteHandler(GetDocumentsHandler, EndpointLogger))
+	apiV1.DELETE("/database/{database_name}/collections/{collection_name}/documents", ServerRouteHandler(DeleteDocumentsHandler, EndpointLogger))
+	apiV1.POST("/database/{database_name}/collections/{collection_name}/documents/query", ServerRouteHandler(QueryDocumentsHandler, EndpointLogger))
+	apiV1.PUT("/database/{database_name}/collections/{collection_name}/documents", ServerRouteHandler(UpdateDocumentsHandler, EndpointLogger))
+
 	return r
 }
 
