@@ -230,6 +230,7 @@ func evalIn(docVal any, opVal any) (bool, error) {
 				return true, nil
 			}
 		}
+
 		return false, nil
 	default:
 		// Fallback to reflection only if necessary

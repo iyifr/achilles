@@ -8,8 +8,7 @@ type labelKey struct {
 }
 
 // labelCache provides an in-memory cache for label→docID mappings,
-// namespaced by collection URI so labels from different collections
-// don't collide (FAISS labels are per-index sequential integers).
+// namespaced by collection URI to avoid collision
 //
 // These mappings are append-only (new inserts add entries, deletes don't remove them),
 // so caching is safe. A stale entry pointing to a deleted document is handled by
