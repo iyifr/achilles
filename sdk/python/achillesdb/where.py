@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+"""
+Optional helpers for ``where`` filters on vector search (``Collection.query``).
+
+You can skip ``W`` entirely: pass a plain ``dict`` with the same JSON shape as the
+``where`` field in ``POST .../documents/query`` (equality shorthand, ``$gt`` / ``$gte`` /
+``$lt`` / ``$lte``, ``$eq``, ``$ne``, ``$in``, ``$nin``, ``$and``, ``$or``, ``$arrContains``).
+For text sources, use ``json.loads(...)`` and pass the resulting dict.
+
+``W`` is syntactic sugar that builds that same structure; it is not required.
+"""
+
 from achillesdb.schemas import Scalar, WhereClause
 
 
 class W:
     """
-    Fluent builder for where clauses.
+    Fluent builder for ``where`` clauses (optional).
+
+    Prefer plain dicts if you already have API-shaped JSON or want to mirror the HTTP
+    request body literally. These calls are equivalent:
+
+        {"category": "tech", "year": {"$gt": 2022}}
+        W.and_(W.eq("category", "tech"), W.gt("year", 2022))
 
     Usage:
         W.eq("category", "tech")

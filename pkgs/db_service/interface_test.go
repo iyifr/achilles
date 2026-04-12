@@ -3,6 +3,7 @@ package dbservice
 import (
 	"achillesdb/pkgs/faiss"
 	wt "achillesdb/pkgs/wiredtiger"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
@@ -641,6 +642,85 @@ func TestMetadataFiltering(t *testing.T) {
 			},
 		},
 	}, []string{"doc2"})
+}
+
+func TestUpdateDocumentsSingleAndBulk(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "UpdateDocuments")
+	collName := "upd_coll"
+
+	if err := dbSvc.CreateDB(); err != nil {
+		t.Fatalf("CreateDB: %v", err)
+	}
+	if err := dbSvc.CreateCollection(collName); err != nil {
+		t.Fatalf("CreateCollection: %v", err)
+	}
+
+	t.Cleanup(func() {
+		os.Remove(collName + ".index")
+	})
+
+	documents := []GlowstickDocument{
+		{Id: "doc1", Content: "a", Embedding: genEmbeddings(1536), Metadata: map[string]any{"city": "NY", "n": 1}},
+		{Id: "doc2", Content: "b", Embedding: genEmbeddings(1536), Metadata: map[string]any{"city": "SF", "n": 2}},
+		{Id: "doc3", Content: "c", Embedding: genEmbeddings(1536), Metadata: map[string]any{"city": "NY", "n": 3}},
+	}
+	if err := dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(documents)); err != nil {
+		t.Fatalf("InsertDocuments: %v", err)
+	}
+
+	n, err := dbSvc.UpdateDocuments(collName, &DocUpdatePayload{
+		DocumentId: "doc1",
+		Updates:    map[string]any{"flag": true},
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("single update: got n=%d err=%v", n, err)
+	}
+
+	n, err = dbSvc.UpdateDocuments(collName, &DocUpdatePayload{
+		Where:   map[string]any{"city": "NY"},
+		Updates: map[string]any{"bulk": true},
+	})
+	if err != nil || n != 2 {
+		t.Fatalf("bulk update: got n=%d err=%v", n, err)
+	}
+
+	docs, err := dbSvc.GetDocuments(collName)
+	if err != nil {
+		t.Fatalf("GetDocuments: %v", err)
+	}
+	for _, d := range docs {
+		switch d.Id {
+		case "doc1":
+			if d.Metadata["bulk"] != true || d.Metadata["flag"] != true {
+				t.Errorf("doc1 metadata: %#v", d.Metadata)
+			}
+		case "doc3":
+			if d.Metadata["bulk"] != true {
+				t.Errorf("doc3 metadata: %#v", d.Metadata)
+			}
+		case "doc2":
+			if _, ok := d.Metadata["bulk"]; ok {
+				t.Errorf("doc2 should not have bulk metadata")
+			}
+		}
+	}
+
+	_, err = dbSvc.UpdateDocuments(collName, &DocUpdatePayload{
+		DocumentId: "doc1",
+		Where:      map[string]any{"city": "NY"},
+		Updates:    map[string]any{"x": 1},
+	})
+	var dbErr *DBError
+	if !errors.As(err, &dbErr) || dbErr.Code != ErrCodeInvalidInput {
+		t.Fatalf("expected invalid input for id+where, got %v", err)
+	}
+
+	_, err = dbSvc.UpdateDocuments(collName, &DocUpdatePayload{
+		Updates: map[string]any{"only": "updates"},
+	})
+	if !errors.As(err, &dbErr) || dbErr.Code != ErrCodeInvalidInput {
+		t.Fatalf("expected invalid input for missing id and where, got %v", err)
+	}
 }
 
 // Helpers

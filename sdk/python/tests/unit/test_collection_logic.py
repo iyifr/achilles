@@ -603,19 +603,19 @@ class TestPeek:
 
 class TestUpdateDocument:
 
-    def test_sync_update_returns_none(self):
+    def test_sync_update_returns_updated_count(self):
         coll, mock_http = _make_sync_collection()
-        mock_http.put.return_value = UpdateDocumentsRes(message="updated")
+        mock_http.put.return_value = UpdateDocumentsRes(message="updated", updated_count=1)
 
         result = coll.update_document(
             document_id="doc1",
             updates={"category": "new_value"},
         )
-        assert result is None
+        assert result == 1
 
     def test_sync_update_calls_http_put(self):
         coll, mock_http = _make_sync_collection()
-        mock_http.put.return_value = UpdateDocumentsRes(message="updated")
+        mock_http.put.return_value = UpdateDocumentsRes(message="updated", updated_count=1)
 
         coll.update_document(
             document_id="doc1",
@@ -623,16 +623,16 @@ class TestUpdateDocument:
         )
         mock_http.put.assert_called_once()
 
-    def test_async_update_returns_none(self):
+    def test_async_update_returns_updated_count(self):
         async def run():
             coll, mock_http = _make_async_collection()
-            mock_http.put = AsyncMock(return_value=UpdateDocumentsRes(message="updated"))
+            mock_http.put = AsyncMock(return_value=UpdateDocumentsRes(message="updated", updated_count=1))
 
             result = await coll.update_document(
                 document_id="doc1",
                 updates={"field": "val"},
             )
-            assert result is None
+            assert result == 1
 
         asyncio.run(run())
 

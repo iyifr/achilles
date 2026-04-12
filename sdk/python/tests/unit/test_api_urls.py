@@ -429,7 +429,7 @@ class TestSyncDocumentApiUrls:
         assert _url_arg(self.http.post) == self.base
 
     def test_update_documents_url(self):
-        self.http.put.return_value = UpdateDocumentsRes(message="ok")
+        self.http.put.return_value = UpdateDocumentsRes(message="ok", updated_count=1)
         self.api.update_documents(_update_input())
         assert _url_arg(self.http.put) == self.base
 
@@ -458,7 +458,7 @@ class TestSyncDocumentApiUrls:
         self.http.put.assert_not_called()
 
     def test_update_documents_uses_put(self):
-        self.http.put.return_value = UpdateDocumentsRes(message="ok")
+        self.http.put.return_value = UpdateDocumentsRes(message="ok", updated_count=1)
         self.api.update_documents(_update_input())
         self.http.put.assert_called_once()
         self.http.post.assert_not_called()
@@ -479,7 +479,7 @@ class TestSyncDocumentApiUrls:
         """All document endpoints must embed both db and collection name."""
         self.http.get.return_value = GetDocumentsRes(documents=[], doc_count=0)
         self.http.post.return_value = InsertDocumentsRes(message="ok")
-        self.http.put.return_value = UpdateDocumentsRes(message="ok")
+        self.http.put.return_value = UpdateDocumentsRes(message="ok", updated_count=1)
         self.http.delete.return_value = DeleteDocumentsRes(deleted_count=1, deleted_ids=["mock_doc_id"])
 
         self.api.get_documents()
@@ -572,7 +572,7 @@ class TestAsyncDocumentApiUrls:
     def test_update_documents_uses_put(self):
         async def run():
             http = _async_http()
-            http.put = AsyncMock(return_value=UpdateDocumentsRes(message="ok"))
+            http.put = AsyncMock(return_value=UpdateDocumentsRes(message="ok", updated_count=1))
             api = self._make_api(http)
             await api.update_documents(_update_input())
             http.put.assert_called_once()

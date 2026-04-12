@@ -131,6 +131,18 @@ class CollectionImpl:
             )
         )
 
+    def _bulk_update_documents(
+        self,
+        where: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> UpdateDocumentsRes | Awaitable[UpdateDocumentsRes]:
+        return self._documents_api.update_documents(
+            UpdateDocumentsReqInput(
+                where=where,
+                updates=updates,
+            )
+        )
+
     def _delete_documents(
         self,
         document_ids: list[str],
@@ -239,10 +251,17 @@ class SyncCollection(CollectionImpl):
         self,
         document_id: str,
         updates: dict[str, Any],
-    ) -> None:
-        self._update_document(
-            document_id, updates
-        )
+    ) -> int:
+        res = cast(UpdateDocumentsRes, self._update_document(document_id, updates))
+        return res.updated_count
+
+    def bulk_update_documents(
+        self,
+        where: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> int:
+        res = cast(UpdateDocumentsRes, self._bulk_update_documents(where, updates))
+        return res.updated_count
 
     def delete_documents(
         self,
@@ -315,10 +334,21 @@ class AsyncCollection(CollectionImpl):
         self,
         document_id: str,
         updates: dict[str, Any],
-    ) -> None:
-        await cast(Awaitable[UpdateDocumentsRes], self._update_document(
+    ) -> int:
+        res = await cast(Awaitable[UpdateDocumentsRes], self._update_document(
             document_id, updates
         ))
+        return res.updated_count
+
+    async def bulk_update_documents(
+        self,
+        where: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> int:
+        res = await cast(Awaitable[UpdateDocumentsRes], self._bulk_update_documents(
+            where, updates
+        ))
+        return res.updated_count
 
     async def delete_documents(
         self,

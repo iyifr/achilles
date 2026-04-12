@@ -5,6 +5,7 @@ import (
 	logger "achillesdb/pkgs/logger"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/fasthttp/router"
 	"github.com/valyala/fasthttp"
@@ -458,6 +459,19 @@ func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	hasID := strings.TrimSpace(requestBody.DocumentId) != ""
+	hasWhere := len(requestBody.Where) > 0
+	if hasID && hasWhere {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.WriteString("Specify either document_id or where, not both")
+		return
+	}
+	if !hasID && !hasWhere {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.WriteString("Specify document_id for a single-document update or where for a bulk update")
+		return
+	}
+
 	db := dbservice.DatabaseService(dbservice.DbParams{
 		Name:      database_name,
 		KvService: wtService,
@@ -465,12 +479,12 @@ func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
 	})
 
 	payload := &dbservice.DocUpdatePayload{
-		DocumentId: requestBody.DocumentId,
+		DocumentId: strings.TrimSpace(requestBody.DocumentId),
 		Where:      requestBody.Where,
 		Updates:    requestBody.Updates,
 	}
 
-	err := db.UpdateDocuments(collection_name, payload)
+	n, err := db.UpdateDocuments(collection_name, payload)
 	if err != nil {
 		handleError(ctx, err)
 		return
@@ -478,7 +492,17 @@ func UpdateDocumentsHandler(ctx *fasthttp.RequestCtx) {
 
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
-	ctx.Write([]byte(`{"message":"Documents updated successfully"}`))
+	resp := map[string]any{
+		"message":       "Documents updated successfully",
+		"updated_count": n,
+	}
+	jsonBytes, err := json.Marshal(resp)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.WriteString("Failed to encode response")
+		return
+	}
+	ctx.Write(jsonBytes)
 }
 
 func DeleteDBHandler(ctx *fasthttp.RequestCtx) {

@@ -3,6 +3,7 @@ package dbservice
 import (
 	"achillesdb/pkgs/faiss"
 	wt "achillesdb/pkgs/wiredtiger"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -950,10 +951,24 @@ func (s *GDBService) GetDocuments(collection_name string) ([]GlowstickDocument, 
 	return docs, nil
 }
 
-func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdatePayload) error {
+func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdatePayload) (int, error) {
 	start := time.Now()
+	hasID := len(payload.DocumentId) > 0
+	hasWhere := len(payload.Where) > 0
+
+	if hasID && hasWhere {
+		return 0, InvalidInput_Err(errors.New("specify either document_id or where, not both"))
+	}
+	if !hasID && !hasWhere {
+		return 0, InvalidInput_Err(errors.New("specify document_id for a single update or where for a bulk update"))
+	}
+
 	if s.Logger != nil {
-		s.Logger.Infow("update_documents_start", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId)
+		if hasID {
+			s.Logger.Infow("update_documents_start", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId)
+		} else {
+			s.Logger.Infow("update_documents_bulk_start", "collection", collection_name, "database", s.Name)
+		}
 	}
 
 	kv := s.KvService
@@ -964,24 +979,32 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 		if s.Logger != nil {
 			s.Logger.Errorw("update_documents_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
 		}
-		return Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
+		return 0, Storage_Err(Wrap_Err(err, "failed to get collection catalog"))
 	}
 	if !exists {
 		if s.Logger != nil {
 			s.Logger.Warnw("update_documents_collection_not_found", "collection", collection_name, "database", s.Name)
 		}
-		return NotFound_Err(ErrCollectionNotFound)
+		return 0, NotFound_Err(ErrCollectionNotFound)
 	}
 	var collection CollectionCatalogEntry
 	if err := bson.Unmarshal(val, &collection); err != nil {
 		if s.Logger != nil {
 			s.Logger.Errorw("update_documents_unmarshal_catalog_error", "collection", collection_name, "database", s.Name, "error", err)
 		}
-		return Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
+		return 0, Serialization_Err(Wrap_Err(err, "failed to unmarshal collection catalog"))
 	}
 
-	if len(payload.DocumentId) == 0 {
-		return InvalidInput_Err(fmt.Errorf("document Id is empty"))
+	if hasWhere {
+		n, err := s.updateDocumentsMatchingWhere(collection, collection_name, payload.Where, payload.Updates)
+		if err != nil {
+			return 0, err
+		}
+		if s.Logger != nil {
+			duration := time.Since(start)
+			s.Logger.Infow("update_documents_bulk_complete", "collection", collection_name, "database", s.Name, "updated_count", n, "duration_ms", duration.Milliseconds())
+		}
+		return n, nil
 	}
 
 	doc_raw, doc_exists, doc_get_err := kv.GetBinaryWithStringKey(collection.TableUri, payload.DocumentId)
@@ -990,14 +1013,14 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 		if s.Logger != nil {
 			s.Logger.Warnw("update_documents_document_not_found", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId)
 		}
-		return NotFound_Err(ErrDocumentNotFound)
+		return 0, NotFound_Err(ErrDocumentNotFound)
 	}
 
 	if doc_get_err != nil {
 		if s.Logger != nil {
 			s.Logger.Errorw("update_documents_get_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", doc_get_err)
 		}
-		return Storage_Err(Wrap_Err(doc_get_err, "failed to get document"))
+		return 0, Storage_Err(Wrap_Err(doc_get_err, "failed to get document"))
 	}
 
 	var doc GlowstickDocument
@@ -1005,7 +1028,7 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 		if s.Logger != nil {
 			s.Logger.Errorw("update_documents_unmarshal_doc_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", err)
 		}
-		return Serialization_Err(Wrap_Err(err, "failed to unmarshal document"))
+		return 0, Serialization_Err(Wrap_Err(err, "failed to unmarshal document"))
 	}
 	for key, value := range payload.Updates {
 		if doc.Metadata == nil {
@@ -1018,14 +1041,14 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 		if s.Logger != nil {
 			s.Logger.Errorw("update_documents_marshal_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", err)
 		}
-		return Serialization_Err(Wrap_Err(err, "failed to marshal updated document"))
+		return 0, Serialization_Err(Wrap_Err(err, "failed to marshal updated document"))
 	}
 
 	if err := kv.PutBinaryWithStringKey(collection.TableUri, payload.DocumentId, updated_val); err != nil {
 		if s.Logger != nil {
 			s.Logger.Errorw("update_documents_put_error", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "error", err)
 		}
-		return Storage_Err(Wrap_Err(err, "failed to update document"))
+		return 0, Storage_Err(Wrap_Err(err, "failed to update document"))
 	}
 
 	if s.Logger != nil {
@@ -1033,7 +1056,81 @@ func (s *GDBService) UpdateDocuments(collection_name string, payload *DocUpdateP
 		s.Logger.Infow("update_documents_complete", "collection", collection_name, "database", s.Name, "document_id", payload.DocumentId, "duration_ms", duration.Milliseconds())
 	}
 
-	return nil
+	return 1, nil
+}
+
+// updateDocumentsMatchingWhere applies metadata patches to every document whose metadata matches filter.
+func (s *GDBService) updateDocumentsMatchingWhere(collection CollectionCatalogEntry, collection_name string, where map[string]any, updates map[string]any) (int, error) {
+	kv := s.KvService
+	cursor, err := kv.ScanRangeBinary(collection.TableUri, []byte(""), []byte("~"))
+	if err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_bulk_scan_error", "collection", collection_name, "table_uri", collection.TableUri, "error", err)
+		}
+		return 0, Storage_Err(Wrap_Err(err, "failed to scan collection table"))
+	}
+	defer cursor.Close()
+
+	updated := 0
+	for cursor.Next() {
+		_, value, err := cursor.Current()
+		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("update_documents_bulk_cursor_current_error", "collection", collection_name, "error", err)
+			}
+			return 0, Storage_Err(Wrap_Err(err, "failed to get current document"))
+		}
+
+		var doc GlowstickDocument
+		if err := bson.Unmarshal(value, &doc); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("update_documents_bulk_unmarshal_doc_error", "collection", collection_name, "error", err)
+			}
+			return 0, Serialization_Err(Wrap_Err(err, "failed to unmarshal document"))
+		}
+
+		meta := doc.Metadata
+		if meta == nil {
+			meta = make(map[string]any)
+		}
+		match, err := matchesFilter(meta, where)
+		if err != nil {
+			return 0, InvalidInput_Err(err)
+		}
+		if !match {
+			continue
+		}
+
+		if doc.Metadata == nil {
+			doc.Metadata = make(map[string]any)
+		}
+		for key, val := range updates {
+			doc.Metadata[key] = val
+		}
+		updatedVal, err := bson.Marshal(doc)
+		if err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("update_documents_bulk_marshal_error", "collection", collection_name, "document_id", doc.Id, "error", err)
+			}
+			return 0, Serialization_Err(Wrap_Err(err, "failed to marshal updated document"))
+		}
+		if err := kv.PutBinaryWithStringKey(collection.TableUri, doc.Id, updatedVal); err != nil {
+			if s.Logger != nil {
+				s.Logger.Errorw("update_documents_bulk_put_error", "collection", collection_name, "document_id", doc.Id, "error", err)
+			}
+			return 0, Storage_Err(Wrap_Err(err, "failed to update document"))
+		}
+		updated++
+	}
+
+	if err := cursor.Err(); err != nil {
+		if s.Logger != nil {
+			s.Logger.Errorw("update_documents_bulk_cursor_error", "collection", collection_name, "error", err)
+		}
+		return 0, Storage_Err(Wrap_Err(err, "cursor error during iteration"))
+	}
+
+	return updated, nil
 }
 
 func (s *GDBService) DeleteDocuments(collection_name string, documentIds []string) ([]string, error) {

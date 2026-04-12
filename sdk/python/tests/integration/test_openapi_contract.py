@@ -80,6 +80,7 @@ RESPONSE_CONTRACTS: dict[str, type] = {
     # Documents — responses
     "Document":                 schemas.Document,
     "QueryResponse":            schemas.QueryRes,
+    "UpdateDocumentsResponse":  schemas.UpdateDocumentsRes,
 
     # Documents — request payloads (that use components)
 }

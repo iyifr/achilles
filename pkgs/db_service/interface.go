@@ -155,7 +155,9 @@ type DBService interface {
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
 	DeleteDocuments(collection_name string, documentIds []string) ([]string, error)
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickQueryResultSet, error)
-	UpdateDocuments(collection_name string, payload *DocUpdatePayload) error
+	// UpdateDocuments updates metadata for one document (by DocumentId) or many (by Where).
+	// Returns the number of documents updated.
+	UpdateDocuments(collection_name string, payload *DocUpdatePayload) (int, error)
 }
 
 type DbParams struct {

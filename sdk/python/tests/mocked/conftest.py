@@ -145,7 +145,7 @@ def fake_insert_res():
 
 @pytest.fixture
 def fake_update_res():
-    return UpdateDocumentsRes(message="documents updated")
+    return UpdateDocumentsRes(message="documents updated", updated_count=1)
 
 
 @pytest.fixture

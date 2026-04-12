@@ -269,16 +269,37 @@ class UpdateDocumentsReqInput(BaseModel):
     """
     PUT /database/{database_name}/collections/{collection_name}/documents
     payload: UpdateDocumentsReqInput
+
+    Specify exactly one of ``document_id`` (single document) or ``where`` (bulk metadata filter).
     """
-    document_id: str = Field(description="ID of the document to update")
-    updates: dict[str, Any] = Field(description="Metadata fields to update")
+    document_id: str | None = Field(
+        default=None,
+        description="ID of the document to update (omit when using where)",
+    )
+    where: dict[str, Any] | None = Field(
+        default=None,
+        description="Metadata filter for bulk update; same operators as vector query (omit when using document_id)",
+    )
+    updates: dict[str, Any] = Field(description="Metadata fields to merge into matching document(s)")
+
+    @model_validator(mode="after")
+    def document_id_or_where(self) -> "UpdateDocumentsReqInput":
+        has_id = self.document_id is not None and str(self.document_id).strip() != ""
+        has_where = self.where is not None and len(self.where) > 0
+        if has_id and has_where:
+            raise ValueError("Specify either document_id or where, not both")
+        if not has_id and not has_where:
+            raise ValueError(
+                "Specify document_id for a single-document update or where for a bulk update"
+            )
+        return self
 
 
 class UpdateDocumentsRes(MessageResponse):
     """
     PUT /database/{database_name}/collections/{collection_name}/documents
     """
-    ...
+    updated_count: int = Field(default=0, description="Number of documents updated")
 
 
 class DeleteDocumentsReq(BaseModel):
