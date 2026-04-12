@@ -8,147 +8,117 @@ A performant single node vector database.
 docker run -d -p 8180:8180 ghcr.io/iyifr/achilles:latest
 ```
 
-## API
+Python client ([`achillesdb`](sdk/python)):
 
-| Method | Endpoint                                                       | Description       |
-| ------ | -------------------------------------------------------------- | ----------------- |
-| POST   | `/api/v1/database`                                             | Create database   |
-| POST   | `/api/v1/database/{db}/collections`                            | Create collection |
-| POST   | `/api/v1/database/{db}/collections/{col_name}/documents`       | Insert documents  |
-| POST   | `/api/v1/database/{db}/collections/{col_name}/documents/query` | Query by vector   |
-| GET    | `/api/v1/database/{db}/collections/{col_name}/documents`       | Get documents     |
-| PUT    | `/api/v1/database/{db}/collections/{col_name}/documents`       | Update documents  |
+```bash
+pip install achillesdb
+# or from this repo:
+# pip install -e ./sdk/python
+```
 
 ## Usage
 
-```bash
-# Create database
-curl -X POST localhost:8180/api/v1/database \
-  -H "Content-Type: application/json" \
-  -d '{"name": "mydb"}'
+Examples use the sync client from [`sdk/python`](sdk/python). Pass `embedding_function` on the client if you omit embeddings on insert or use text `query` on search; otherwise supply `query_embedding` / per-document embeddings explicitly.
 
-# Create collection
-curl -X POST localhost:8180/api/v1/database/mydb/collections \
-  -H "Content-Type: application/json" \
-  -d '{"name": "articles"}'
+```python
+from achillesdb import AchillesClient
 
-# Insert documents with metadata
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents \
-  -H "Content-Type: application/json" \
-  -d '{
-    "documents": [
-      {
-        "id": "article-1",
-        "content": "Introduction to machine learning",
-        "embedding": [0.12, -0.34, 0.56, ...],
-        "metadata": {"category": "tech", "author": "jane", "year": 2024}
-      },
-      {
-        "id": "article-2",
-        "content": "Cooking with seasonal ingredients",
-        "embedding": [0.78, 0.23, -0.45, ...],
-        "metadata": {"category": "food", "author": "john", "year": 2023}
-      }
-    ]
-  }'
+def embed(texts: list[str]) -> list[list[float]]:
+    return [[0.12, -0.34, 0.56], [0.78, 0.23, -0.45]]  # replace with your embedding model
+
+client = AchillesClient(host="localhost", port=8180, embedding_function=embed)
+
+db = client.create_database("mydb")
+collection = db.create_collection("articles")
+
+collection.add_documents(
+    ids=["article-1", "article-2"],
+    documents=[
+        "Introduction to machine learning",
+        "Cooking with seasonal ingredients",
+    ],
+    embeddings=[
+        [0.12, -0.34, 0.56],
+        [0.78, 0.23, -0.45],
+    ],
+    metadatas=[
+        {"category": "tech", "author": "jane", "year": 2024},
+        {"category": "food", "author": "john", "year": 2023},
+    ],
+)
 ```
 
 ### Vector Query with Metadata Filtering
 
-Achilles supports expressive metadata filtering using the `where` clause.
-You can combine semantic vector search with filtering:
+Achilles supports expressive metadata filtering using the `where` argument to `query`. The first argument is always `top_k`. You can pass raw dicts or build clauses with `W` from `achillesdb`.
 
-```bash
-# Find similar documents, filtered by category
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 10,
-    "query_embedding": [0.15, -0.32, 0.51, ...],
-    "where": {"category": "tech"}
-  }'
+```python
+from achillesdb import W
+
+# Similar documents, filtered by category
+collection.query(
+    top_k=10,
+    query_embedding=[0.15, -0.32, 0.51],
+    where={"category": "tech"},
+)
 
 # Filter by multiple fields
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 5,
-    "query_embedding": [0.15, -0.32, 0.51, ...],
-    "where": {"category": "tech", "year": 2024}
-  }'
+collection.query(
+    top_k=5,
+    query_embedding=[0.15, -0.32, 0.51],
+    where={"category": "tech", "year": 2024},
+)
 
-# Numeric Comparison: Find tech articles after 2022
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 5,
-    "query_embedding": [0.2, -0.1, 0.5, ...],
-    "where": {"category": "tech", "year": {"$gt": 2022}}
-  }'
+# Numeric comparison: tech articles after 2022
+collection.query(
+    top_k=5,
+    query_embedding=[0.2, -0.1, 0.5],
+    where={"category": "tech", "year": {"$gt": 2022}},
+)
 
-# $in Operator: Return articles by author in given list
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 3,
-    "query_embedding": [0.45, -0.12, 0.28, ...],
-    "where": {"author": {"$in": ["jane", "john"]}}
-  }'
+# $in: authors in a list (raw dict or W.in_)
+collection.query(
+    top_k=3,
+    query_embedding=[0.45, -0.12, 0.28],
+    where=W.in_("author", ["jane", "john"]),
+)
 
-# $and / $or Logical Operators: Nested and/or conditions
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 2,
-    "query_embedding": [0.98, 0.12, -0.21, ...],
-    "where": {
-      "$or": [
-        {"category": "food"},
-        {"year": {"$lt": 2024}}
-      ]
-    }
-  }'
+# $or: food category OR year before 2024
+collection.query(
+    top_k=2,
+    query_embedding=[0.98, 0.12, -0.21],
+    where=W.or_(
+        W.eq("category", "food"),
+        W.lt("year", 2024),
+    ),
+)
 
-# Complex Nested Condition: articles in tech from 2024 OR (food from 2023)
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 8,
-    "query_embedding": [0.23, 0.91, -0.46, ...],
-    "where": {
-      "$or": [
-        {"category": "tech", "year": 2024},
-        {"category": "food", "year": 2023}
-      ]
-    }
-  }'
+# Nested $or: (tech and 2024) or (food and 2023)
+collection.query(
+    top_k=8,
+    query_embedding=[0.23, 0.91, -0.46],
+    where=W.or_(
+        W.and_(W.eq("category", "tech"), W.eq("year", 2024)),
+        W.and_(W.eq("category", "food"), W.eq("year", 2023)),
+    ),
+)
 
+# $arrContains: array field must contain at least one value
+collection.query(
+    top_k=10,
+    query_embedding=[...],  # your query vector
+    where=W.arr_contains("allowed_acls", ["acl-readers", "acl-admin-42"]),
+)
 
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 10,
-    "query_embedding": [...],
-    "where": {
-      "allowed_acls": { "$arrContains": ["acl-readers", "acl-admin-42"] }
-    }
-  }'
-# This query will only return documents where the "allowed_acls" array field contains
-# at least one of the ACLs the user belongs to.
-
-// You can combine this RBAC restriction with other retrieval criteria as needed,
-// e.g., filter to "tech" category with access check:
-curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "top_k": 10,
-    "query_embedding": [...],
-    "where": {
-      "category": "tech",
-      "allowed_acls": { "$arrContains": ["acl-readers", "acl-admin-42"] }
-    }
-  }'
-
+# Combine category with ACL check
+collection.query(
+    top_k=10,
+    query_embedding=[...],
+    where=W.and_(
+        W.eq("category", "tech"),
+        W.arr_contains("allowed_acls", ["acl-readers", "acl-admin-42"]),
+    ),
+)
 ```
 
 > **Supported Operators:**
@@ -162,22 +132,13 @@ curl -X POST localhost:8180/api/v1/database/mydb/collections/articles/documents/
 
 ### Update Documents
 
-```bash
-# Update by document ID
-curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
-  -H "Content-Type: application/json" \
-  -d '{
-    "document_id": "article-1",
-    "updates": {"category": "ai", "featured": true}
-  }'
+The SDK sends `document_id` and `updates` (metadata patches) to the PUT endpoint. There is no `where`-based bulk update in the client yet; use the REST API if you need that.
 
-# Update by filter
-curl -X PUT localhost:8180/api/v1/database/mydb/collections/articles/documents \
-  -H "Content-Type: application/json" \
-  -d '{
-    "where": {"author": "jane"},
-    "updates": {"reviewed": true}
-  }'
+```python
+collection.update_document(
+    document_id="article-1",
+    updates={"category": "ai", "featured": True},
+)
 ```
 
 ### Architecture
