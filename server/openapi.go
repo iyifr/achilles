@@ -97,9 +97,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CollectionCatalogEntry'
+                $ref: '#/components/schemas/ListCollectionsResponse'
     post:
       summary: Create a collection
       tags:
@@ -216,7 +214,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QueryResponse'
+                $ref: '#/components/schemas/GetDocumentsResponse'
         '404':
           description: Collection not found
           content:
@@ -403,7 +401,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MessageResponse'
+                $ref: '#/components/schemas/DeleteDocumentsResponse'
         '400':
           description: Invalid input (empty document_ids)
           content:
@@ -515,7 +513,30 @@ components:
         metadata:
           type: object
 
+    QueryDocument:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+        distance:
+          type: number
+          format: float
+
     QueryResponse:
+      type: object
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryDocument'
+        doc_count:
+          type: integer
+
+    GetDocumentsResponse:
       type: object
       properties:
         documents:
@@ -587,6 +608,29 @@ components:
         db_count:
           type: integer
           description: Number of databases
+
+    ListCollectionsResponse:
+      type: object
+      properties:
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/CollectionCatalogEntry'
+        collection_count:
+          type: integer
+          description: Number of collections
+
+    DeleteDocumentsResponse:
+      type: object
+      properties:
+        deleted_count:
+          type: integer
+          description: Number of deleted documents
+        deleted_ids:
+          type: array
+          items:
+            type: string
+          description: IDs of deleted documents
 `
 
 const swaggerUIHTML = `<!DOCTYPE html>
