@@ -48,42 +48,96 @@ collection.add_documents(
 )
 ```
 
-### Vector Query with Metadata Filtering
+### Metadata Filtering
 
-Achilles supports expressive metadata filtering using the `where` argument to `query`. The first argument is always `top_k`. You can pass raw dicts or build clauses with `W` from `achillesdb`.
+Use the `where` argument on the query function to filter results based on metadata. The python SDK offers two ways to build filters - plain dicts or the `W` helper, W database.
+
+#### Plain dicts
+Pass a Python `dict` with the same structure as the `where` object in `POST .../documents/query`. For filters stored as JSON text, use `json.loads` and pass the resulting dict.
 
 ```python
-from achillesdb import W
+import json
 
-# Similar documents, filtered by category
-collection.query(
+article_collection.query(
     top_k=10,
     query_embedding=[0.15, -0.32, 0.51],
     where={"category": "tech"},
 )
-
-# Filter by multiple fields
-collection.query(
+ 
+article_collection.query(
     top_k=5,
     query_embedding=[0.15, -0.32, 0.51],
     where={"category": "tech", "year": 2024},
 )
 
-# Numeric comparison: tech articles after 2022
-collection.query(
+# Comparisons and $in
+article_collection.query(
     top_k=5,
     query_embedding=[0.2, -0.1, 0.5],
     where={"category": "tech", "year": {"$gt": 2022}},
 )
+article_collection.query(
+    top_k=3,
+    query_embedding=[0.45, -0.12, 0.28],
+    where={"author": {"$in": ["jane", "john"]}},
+)
 
-# $in: authors in a list (raw dict or W.in_)
+# $or
+collection.query(
+    top_k=2,
+    query_embedding=[0.98, 0.12, -0.21],
+    where={
+        "$or": [
+            {"category": "food"},
+            {"year": {"$lt": 2024}},
+        ]
+    },
+)
+
+# Nested $or: (tech and 2024) or (food and 2023)
+collection.query(
+    top_k=8,
+    query_embedding=[0.23, 0.91, -0.46],
+    where={
+        "$or": [
+            {"$and": [{"category": "tech"}, {"year": 2024}]},
+            {"$and": [{"category": "food"}, {"year": 2023}]},
+        ]
+    },
+)
+
+# $arrContains and combining with $and
+collection.query(
+    top_k=10,
+    query_embedding=[...],  # your query vector
+    where={
+        "$and": [
+            {"category": "tech"},
+            {"allowed_acls": {"$arrContains": ["acl-readers", "acl-admin-42"]}},
+        ]
+    },
+)
+
+# From a JSON string
+collection.query(
+    top_k=5,
+    query_embedding=[0.2, -0.1, 0.5],
+    where=json.loads('{"category": "tech", "year": {"$gt": 2022}}'),
+)
+```
+
+#### `W` helpers (`W.eq`, `W.or_`, …)
+Optional filter builder.
+
+```python
+from achillesdb import W
+
 collection.query(
     top_k=3,
     query_embedding=[0.45, -0.12, 0.28],
     where=W.in_("author", ["jane", "john"]),
 )
 
-# $or: food category OR year before 2024
 collection.query(
     top_k=2,
     query_embedding=[0.98, 0.12, -0.21],
@@ -93,7 +147,6 @@ collection.query(
     ),
 )
 
-# Nested $or: (tech and 2024) or (food and 2023)
 collection.query(
     top_k=8,
     query_embedding=[0.23, 0.91, -0.46],
@@ -103,14 +156,12 @@ collection.query(
     ),
 )
 
-# $arrContains: array field must contain at least one value
 collection.query(
     top_k=10,
-    query_embedding=[...],  # your query vector
+    query_embedding=[...],
     where=W.arr_contains("allowed_acls", ["acl-readers", "acl-admin-42"]),
 )
 
-# Combine category with ACL check
 collection.query(
     top_k=10,
     query_embedding=[...],
@@ -121,7 +172,7 @@ collection.query(
 )
 ```
 
-> **Supported Operators:**
+> **Supported operators (plain-dict / JSON shape):**
 >
 > - Simple equality: `{"field": value}`
 > - $gt, $gte, $lt, $lte (numbers/dates): `{"field": {"$gt": 10}}`
@@ -129,29 +180,30 @@ collection.query(
 > - $in, $nin: `{"field": {"$in": [a, b, c]}}`
 > - $and, $or for combining filters
 > - $arrContains: for checking items inside array fields
+>
+> The `W` helpers map to these same operators (for example `W.gt` → `$gt`, `W.or_` → `$or`).
 
 ### Update Documents
 
-The SDK sends `document_id` and `updates` (metadata patches) to the PUT endpoint. There is no `where`-based bulk update in the client yet; use the REST API if you need that.
-
 ```python
-collection.update_document(
+# Single document by id (returns number updated, usually 1)
+n = collection.update_document(
     document_id="article-1",
     updates={"category": "ai", "featured": True},
+)
+
+# Bulk: merge metadata into every document matching the filter
+n = collection.bulk_update_documents(
+    where={"category": "tech"},
+    updates={"featured": False},
 )
 ```
 
 ### Architecture
-
 AchillesDB has two core components:
 
-1. **Document Store**: WiredTiger KV store holds BSON bytes (on disk json document representation).
-2. **Vector Search**: FAISS vector search toolkit for efficient vector search.
-
-The system connects the two layers through an intermediary LABEL_ID --> DOC_ID key value table that maps embedding IDs to document IDs.
-
-For detailed architecture diagrams and data flow, see [ARCHITECTURE.md](ARCHITECTURE.md).
+1. **Document Store**: Persistent KV store holds binary document data.
+2. **Vector Search**: FAISS serves as the vector index allowing efficient search and embedding storage.
 
 ## License
-
 MIT
