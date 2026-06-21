@@ -404,6 +404,12 @@ class InOp(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+# $nin operator
+class NinOp(BaseModel):
+    nin: list[Scalar] = Field(alias="$nin")
+    model_config = {"populate_by_name": True}
+
+
 # $arrContains operator
 class ArrContainsOp(BaseModel):
     arr_contains: list[Scalar] = Field(alias="$arrContains")
@@ -411,7 +417,7 @@ class ArrContainsOp(BaseModel):
 
 
 # A field value is either a scalar (equality shorthand) or an operator object
-FieldValue = Scalar | ComparisonOp | InOp | ArrContainsOp
+FieldValue = Scalar | ComparisonOp | InOp | NinOp | ArrContainsOp
 
 
 class WhereClause(BaseModel):

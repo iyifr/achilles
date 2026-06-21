@@ -47,6 +47,12 @@ class TestWBuilderOperators:
             "year": {"$in": [2021, 2022, 2024]}
         }
 
+    def test_nin_produces_correct_clause(self):
+        clause = W.nin_("year", [2021, 2022, 2024])
+        assert clause.to_dict() == {
+            "year": {"$nin": [2021, 2022, 2024]}
+        }
+
     def test_arr_contains_produces_correct_clause(self):
         clause = W.arr_contains("tags", ["new", "sale"])
         assert clause.to_dict() == {
@@ -72,6 +78,7 @@ class TestWBuilderOperators:
             W.lte("f", 1),
             W.ne("f", "v"),
             W.in_("f", ["v"]),
+            W.nin_("f", ["v"]),
             W.arr_contains("f", ["v"]),
         ]
         for clause in builders:

@@ -28,6 +28,7 @@ class W:
         W.eq("category", "tech")
         W.gt("year", 2022)
         W.in_("author", ["jane", "john"])
+        W.nin_("author", ["jane", "john"])
         W.arr_contains("allowed_acls", ["acl-readers"])
         W.and_(W.eq("category", "tech"), W.gt("year", 2022))
         W.or_(W.eq("category", "food"), W.lt("year", 2024))
@@ -60,6 +61,10 @@ class W:
     @staticmethod
     def in_(field: str, values: list[Scalar]) -> WhereClause:
         return WhereClause(**{field: {"$in": values}})
+
+    @staticmethod
+    def nin_(field: str, values: list[Scalar]) -> WhereClause:
+        return WhereClause(**{field: {"$nin": values}})
 
     @staticmethod
     def arr_contains(field: str, values: list[Scalar]) -> WhereClause:
