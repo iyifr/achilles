@@ -100,6 +100,8 @@ RUN go mod download
 
 COPY . .
 
+RUN go run ./cmd/openapi-gen
+
 # Build with CGO enabled
 # Note: FAISS C API library is named 'faiss_c' in the c_api directory
 RUN ldconfig && \
