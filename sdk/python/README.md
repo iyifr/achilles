@@ -95,8 +95,8 @@ async, matching the client's mode).
 ```bash
 cd sdk/python
 uv sync
-uv run pytest -m unit            # unit + mocked tests, no server required
-uv run pytest -m integration     # requires a running AchillesDB server
+uv run pytest tests/unit         # no server required
+uv run pytest tests/integration  # requires a running AchillesDB server
 ```
 
 ## License

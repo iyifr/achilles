@@ -78,10 +78,10 @@ class CollectionImpl:
         documents: list[str],
         embeddings: list[list[float]] | None = None,
         metadatas: list[dict[str, Any]] | None = None,
+        upsert: bool = False,
     ) -> InsertDocumentsRes | Awaitable[InsertDocumentsRes]:
         # TODO: review error handling
         # TODO: implement doc embedding
-        # FIX: API: the endpoint seems to be accepting duplicate ids
 
         if embeddings is None:
             if self.embedding_function is None:
@@ -101,6 +101,7 @@ class CollectionImpl:
                         documents=documents,
                         embeddings=embeddings,
                         metadatas=metadatas if metadatas is not None else [{} for _ in range(len(ids))],
+                        upsert=upsert,
                     )
                     return await cast(
                         Awaitable[InsertDocumentsRes],
@@ -113,6 +114,7 @@ class CollectionImpl:
             documents=documents,
             embeddings=embeddings,
             metadatas=metadatas if metadatas is not None else [{} for _ in range(len(ids))],
+            upsert=upsert,
         )
         return self._documents_api.insert_documents(docs_data)
 
@@ -236,9 +238,10 @@ class SyncCollection(CollectionImpl):
         documents: list[str],
         embeddings: list[list[float]] | None = None,
         metadatas: list[dict[str, Any]] | None = None,
+        upsert: bool = False,
     ) -> None:
         self._add_documents(
-            ids, documents, embeddings, metadatas
+            ids, documents, embeddings, metadatas, upsert
         )
 
     def get_documents(self) -> list[GetDocDict]:
@@ -319,9 +322,10 @@ class AsyncCollection(CollectionImpl):
         documents: list[str],
         embeddings: list[list[float]] | None = None,
         metadatas: list[dict[str, Any]] | None = None,
+        upsert: bool = False,
     ) -> None:
         await cast(Awaitable[InsertDocumentsRes], self._add_documents(
-            ids, documents, embeddings, metadatas
+            ids, documents, embeddings, metadatas, upsert
         ))
 
     async def get_documents(self) -> list[GetDocDict]:

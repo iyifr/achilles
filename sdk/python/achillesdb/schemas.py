@@ -211,6 +211,10 @@ class InsertDocumentReqInput(BaseModel):
         default_factory=list,
         description="Arbitrary metadata key-value pairs"
     )
+    upsert: bool = Field(
+        default=False,
+        description="If true, ids that already exist are replaced instead of rejected with a 409",
+    )
 
     @model_validator(mode='after')
     def check_validations(self) -> InsertDocumentReqInput:
