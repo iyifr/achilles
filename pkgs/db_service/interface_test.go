@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -210,10 +211,21 @@ func TestInsertDocuments(t *testing.T) {
 
 	collTableURI := catalogEntry.TableUri
 
-	// Verify inserted docs
+	// Verify inserted docs. The document table is keyed by internal id, not
+	// the caller-given string id, so resolve through the alias table first.
 	for index, doc := range documents {
-		docKey := doc.Id[:]
-		record, found, err := wtService.GetBinary(collTableURI, []byte(docKey))
+		aliasVal, aliasFound, err := wtService.GetString(DOC_ID_ALIAS_TABLE_URI, doc.Id)
+		if err != nil || !aliasFound {
+			t.Errorf("Index %d: failed to resolve alias for _id=%s: %v", index, doc.Id, err)
+			continue
+		}
+		internalId, err := strconv.ParseInt(aliasVal, 10, 64)
+		if err != nil {
+			t.Errorf("Index %d: corrupt alias for _id=%s: %v", index, doc.Id, err)
+			continue
+		}
+
+		record, found, err := wtService.GetBinary(collTableURI, encodeInternalId(internalId))
 		if err != nil {
 			t.Errorf("Index %d: failed to read doc _id=%s: %v", index, doc.Id, err)
 		}
@@ -311,11 +323,23 @@ func TestInsertDocumentsSOA(t *testing.T) {
 		})
 	}
 
-	// Verify each document
+	// Verify each document. The document table is keyed by internal id, not
+	// the caller-given string id, so resolve through the alias table first.
 	collTableURI := catalogEntry.TableUri
 	for i := 0; i < numDocs; i++ {
 		docKey := soa.Ids[i]
-		record, found, err := wtService.GetBinary(collTableURI, []byte(docKey))
+		aliasVal, aliasFound, err := wtService.GetString(DOC_ID_ALIAS_TABLE_URI, docKey)
+		if err != nil || !aliasFound {
+			t.Errorf("Index %d: failed to resolve alias for _id=%s: %v", i, docKey, err)
+			continue
+		}
+		internalId, err := strconv.ParseInt(aliasVal, 10, 64)
+		if err != nil {
+			t.Errorf("Index %d: corrupt alias for _id=%s: %v", i, docKey, err)
+			continue
+		}
+
+		record, found, err := wtService.GetBinary(collTableURI, encodeInternalId(internalId))
 		if err != nil {
 			t.Errorf("Index %d: failed to read doc _id=%s: %v", i, docKey, err)
 		}
@@ -406,6 +430,16 @@ func TestInsertDocuments_ValidationErrors(t *testing.T) {
 			},
 			expectErr: "embeddings array cannot be empty",
 		},
+		{
+			name: "duplicate_ids_in_batch",
+			soa: &GlowstickDocumentSOA{
+				Ids:        []string{"dup1", "dup1"},
+				Contents:   []string{"content1", "content2"},
+				Embeddings: make([]float32, 2*128),
+				Metadatas:  []map[string]interface{}{{}, {}},
+			},
+			expectErr: "duplicate ids",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -417,6 +451,121 @@ func TestInsertDocuments_ValidationErrors(t *testing.T) {
 				t.Errorf("expected error containing %q, got: %v", tc.expectErr, err)
 			}
 		})
+	}
+}
+
+func TestInsertDocuments_RejectsExistingId(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "InsertDocuments_ExistingId")
+	collName := "test_existing_id"
+
+	if err := dbSvc.CreateDB(); err != nil {
+		t.Fatalf("Failed to create DB: %s", err)
+	}
+	if err := dbSvc.CreateCollection(collName); err != nil {
+		t.Fatalf("Failed to create collection: %s", err)
+	}
+
+	first := &GlowstickDocumentSOA{
+		Ids:        []string{"shared-id"},
+		Contents:   []string{"original content"},
+		Embeddings: genEmbeddings(128),
+		Metadatas:  []map[string]interface{}{{}},
+	}
+	if err := dbSvc.InsertDocuments(collName, first); err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	second := &GlowstickDocumentSOA{
+		Ids:        []string{"shared-id"},
+		Contents:   []string{"overwrite attempt"},
+		Embeddings: genEmbeddings(128),
+		Metadatas:  []map[string]interface{}{{}},
+	}
+	err := dbSvc.InsertDocuments(collName, second)
+	if err == nil {
+		t.Fatal("expected error re-inserting an existing id, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exist") {
+		t.Errorf("expected 'already exist' error, got: %v", err)
+	}
+}
+
+func TestInsertDocuments_Upsert(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "InsertDocuments_Upsert")
+	collName := "test_upsert"
+	dim := 128
+
+	if err := dbSvc.CreateDB(); err != nil {
+		t.Fatalf("Failed to create DB: %s", err)
+	}
+	if err := dbSvc.CreateCollection(collName); err != nil {
+		t.Fatalf("Failed to create collection: %s", err)
+	}
+
+	originalEmbedding := genEmbeddings(dim)
+	first := &GlowstickDocumentSOA{
+		Ids:        []string{"shared-id"},
+		Contents:   []string{"original content"},
+		Embeddings: originalEmbedding,
+		Metadatas:  []map[string]interface{}{{"v": 1}},
+	}
+	if err := dbSvc.InsertDocuments(collName, first); err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	updatedEmbedding := genEmbeddings(dim)
+	second := &GlowstickDocumentSOA{
+		Ids:        []string{"shared-id"},
+		Contents:   []string{"updated content"},
+		Embeddings: updatedEmbedding,
+		Metadatas:  []map[string]interface{}{{"v": 2}},
+		Upsert:     true,
+	}
+	if err := dbSvc.InsertDocuments(collName, second); err != nil {
+		t.Fatalf("upsert insert failed: %v", err)
+	}
+
+	// doc_count must not double-count an upsert.
+	collEntry, err := dbSvc.GetCollection(collName)
+	if err != nil {
+		t.Fatalf("GetCollection failed: %v", err)
+	}
+	if collEntry.Stats.Doc_Count != 1 {
+		t.Errorf("expected doc_count=1 after upsert, got %d", collEntry.Stats.Doc_Count)
+	}
+
+	// The vector must have been replaced, not appended: NTotal stays 1.
+	indexCache := faiss.GlobalIndexCache()
+	cachedIdx, err := indexCache.GetOrCreate(collEntry.Info.VectorIndexUri, dim)
+	if err != nil {
+		t.Fatalf("failed to get vector index: %v", err)
+	}
+	ntotal, err := cachedIdx.Index.NTotal()
+	if err != nil {
+		t.Fatalf("NTotal failed: %v", err)
+	}
+	if ntotal != 1 {
+		t.Errorf("expected NTotal=1 after upsert, got %d", ntotal)
+	}
+
+	// Querying with the new embedding must return exactly one result with
+	// the updated content -- not two (old + new vector both resolving to
+	// the live, overwritten document row).
+	docs, err := dbSvc.QueryCollection(collName, QueryStruct{
+		TopK:           5,
+		QueryEmbedding: updatedEmbedding,
+	})
+	if err != nil {
+		t.Fatalf("QueryCollection failed: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected exactly 1 query result after upsert, got %d: %+v", len(docs), docs)
+	}
+	if docs[0].Content != "updated content" {
+		t.Errorf("expected updated content, got %q", docs[0].Content)
+	}
+	if fmt.Sprint(docs[0].Metadata["v"]) != "2" {
+		t.Errorf("expected updated metadata v=2, got %v", docs[0].Metadata["v"])
 	}
 }
 

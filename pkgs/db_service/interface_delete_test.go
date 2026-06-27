@@ -1,8 +1,10 @@
 package dbservice
 
 import (
+	"achillesdb/pkgs/faiss"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -159,6 +161,38 @@ func TestDeleteCollection(t *testing.T) {
 	}
 }
 
+func TestDeleteCollection_RecreateAfterDelete(t *testing.T) {
+	_, dbSvc := setupTestDB(t, "DeleteCollection_Recreate")
+
+	if err := dbSvc.CreateDB(); err != nil {
+		t.Fatalf("Failed to create DB: %v", err)
+	}
+
+	collName := "recreate_me"
+	if err := dbSvc.CreateCollection(collName); err != nil {
+		t.Fatalf("Failed to create collection: %v", err)
+	}
+	if err := dbSvc.DeleteCollection(collName); err != nil {
+		t.Fatalf("DeleteCollection failed: %v", err)
+	}
+
+	if err := dbSvc.CreateCollection(collName); err != nil {
+		t.Fatalf("CreateCollection after delete should succeed, got: %v", err)
+	}
+
+	doc := []GlowstickDocument{
+		{
+			Id:        primitive.NewObjectID().Hex(),
+			Content:   "post-recreate document",
+			Embedding: genEmbeddings(128),
+			Metadata:  map[string]any{"type": "test"},
+		},
+	}
+	if err := dbSvc.InsertDocuments(collName, NewGlowstickDocumentSOA(doc)); err != nil {
+		t.Fatalf("InsertDocuments into recreated collection failed: %v", err)
+	}
+}
+
 func TestDeleteCollection_NotFound(t *testing.T) {
 	_, dbSvc := setupTestDB(t, "DeleteCollectionNotFound")
 
@@ -252,11 +286,35 @@ func TestDeleteDocuments(t *testing.T) {
 	}
 	tableUri := collEntry.Info.TableUri
 
+	docExists := func(docId string) bool {
+		aliasVal, found, _ := wtService.GetString(DOC_ID_ALIAS_TABLE_URI, docId)
+		if !found {
+			return false
+		}
+		internalId, err := strconv.ParseInt(aliasVal, 10, 64)
+		if err != nil {
+			return false
+		}
+		_, exists, _ := wtService.GetBinary(tableUri, encodeInternalId(internalId))
+		return exists
+	}
+
 	// Verify documents exist
-	_, exists1, _ := wtService.GetBinaryWithStringKey(tableUri, doc1Id)
-	_, exists2, _ := wtService.GetBinaryWithStringKey(tableUri, doc2Id)
-	if !exists1 || !exists2 {
+	if !docExists(doc1Id) || !docExists(doc2Id) {
 		t.Fatalf("Documents should exist before deletion")
+	}
+
+	indexCache := faiss.GlobalIndexCache()
+	cachedIdx, err := indexCache.GetOrCreate(collEntry.Info.VectorIndexUri, 128)
+	if err != nil {
+		t.Fatalf("Failed to get vector index: %v", err)
+	}
+	ntotalBefore, err := cachedIdx.Index.NTotal()
+	if err != nil {
+		t.Fatalf("Failed to get NTotal: %v", err)
+	}
+	if ntotalBefore != 3 {
+		t.Fatalf("Expected NTotal=3 before deletion, got %d", ntotalBefore)
 	}
 
 	// Delete first two documents
@@ -271,19 +329,24 @@ func TestDeleteDocuments(t *testing.T) {
 	}
 
 	// Verify deleted documents no longer exist
-	_, exists1, _ = wtService.GetBinaryWithStringKey(tableUri, doc1Id)
-	_, exists2, _ = wtService.GetBinaryWithStringKey(tableUri, doc2Id)
-	if exists1 {
+	if docExists(doc1Id) {
 		t.Errorf("Document 1 should not exist after deletion")
 	}
-	if exists2 {
+	if docExists(doc2Id) {
 		t.Errorf("Document 2 should not exist after deletion")
 	}
 
 	// Verify remaining document still exists
-	_, exists3, _ := wtService.GetBinaryWithStringKey(tableUri, doc3Id)
-	if !exists3 {
+	if !docExists(doc3Id) {
 		t.Errorf("Document 3 should still exist after deletion of other docs")
+	}
+
+	ntotalAfter, err := cachedIdx.Index.NTotal()
+	if err != nil {
+		t.Fatalf("Failed to get NTotal after deletion: %v", err)
+	}
+	if ntotalAfter != 1 {
+		t.Errorf("Expected NTotal=1 after deleting 2 of 3 vectors, got %d", ntotalAfter)
 	}
 
 	// Verify stats were updated
@@ -380,4 +443,3 @@ func TestDeleteDocuments_EmptyList(t *testing.T) {
 		t.Errorf("Expected InvalidInput error code, got %v", dbErr.Code)
 	}
 }
-
