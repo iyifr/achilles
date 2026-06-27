@@ -7,19 +7,20 @@ Built with primitives for document db land (MongoDB), namely:
 
 ## Quick Start
 
+Pull docker image
+
 ```bash
 docker run -d -p 8180:8180 ghcr.io/iyifr/achilles:latest
 ```
 
-Python client ([`achillesdb`](sdk/python)):
-
+### Python client ([`achillesdb`](sdk/python)):
 ```bash
 pip install achillesdb
 # or from this repo:
 # pip install -e ./sdk/python
 ```
 
-## Usage
+#### Usage
 
 Examples use the sync client from [`sdk/python`](sdk/python). Pass `embedding_function` on the client if you omit embeddings on insert or use text `query` on search; otherwise supply `query_embedding` / per-document embeddings explicitly.
 
@@ -51,7 +52,7 @@ collection.add_documents(
 )
 ```
 
-### Metadata Filtering
+#### Metadata Filtering
 
 Use the `where` argument on the query function to filter results based on metadata. The python SDK offers two ways to build filters - plain dicts or the `W` helper, W database.
 
@@ -186,7 +187,7 @@ collection.query(
 >
 > The `W` helpers map to these same operators (for example `W.gt` → `$gt`, `W.or_` → `$or`).
 
-### Update Documents
+#### Update Documents
 
 ```python
 # Single document by id (returns number updated, usually 1)
