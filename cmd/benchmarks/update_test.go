@@ -38,7 +38,7 @@ func BenchmarkUpdateDocuments(b *testing.B) {
 					DocumentId: targetID,
 					Updates:    updates,
 				}
-				if err := dbSvc.UpdateDocuments("bench_col", payload); err != nil {
+				if _, err := dbSvc.UpdateDocuments("bench_col", payload); err != nil {
 					b.Fatalf("UpdateDocuments failed: %v", err)
 				}
 			}

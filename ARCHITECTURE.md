@@ -1,41 +1,35 @@
 ##  High level design.
 A vector database enables fast retrieval of relevant documents from a large corpus by comparing query embeddings against stored document embeddings. 
 
-This requires **two core components**:
+To build a vector database you need the following (simplified) - 
 
-1. Document store
-2. A vector index
+1. Document store.
+2. An embedding store to store document embeddings.
+3. A fast search function to get the top *k* embeddings in the dataset closest to the query embedding.
+4. A mapping between the embedding store and the document store so we know what document pieces own a relevant embedding at query time
 
-Then you need a bridge between the two abstractions.
+---
+
+### The Mapping: Internal IDs
+**One int64 serves as both the FAISS vector ID and the WiredTiger document key**.
+
+When a document is inserted:
+1. A monotonically incrementing `internal_id` (int64) is assigned and stored in `CollectionStats.NextInternalId`.
+2. The document row is written to WiredTiger using that int64 as the key (big-endian encoded so byte order matches numeric order).
+3. The vector is added to FAISS using the same int64 as the label, via `AddWithIds`.
+4. A thin alias entry maps the user-facing string ID → int64 in `table:doc_id_alias`.
 
 ```
-    ┌────────────────────────────────────────────────────────────────────────┐
-    │                                                                        │
-    │   ╭─────────────────────────╮         ╭─────────────────────────╮      │
-    │   │                         │         │                         │      │
-    │   │   📄 DOCUMENT STORE     │         |    🔍 VECTOR INDEX      |      │
-    │   │                         │         │                         │      │
-    │   │   WiredTiger + BSON     │         │       FAISS             │      │
-    │   │                         │         │                         │      │
-    │   │  • CRUD operations      │         │  • Similarity search    │      │
-    │   │  • Metadata storage     │         │  • Top-K retrieval      │      │
-    │   │  • B-tree indexing      │         │  • Optimized ANN algorithms    │
-    │   │                         │         │                         │      │
-    │   ╰─────────────────────────╯         ╰─────────────────────────╯      │
-    │              │                                   │                     │
-    │              │         ╭──────────────╮          │                     │
-    │              ╰────────►│  LABELS KV   │◄─────────╯                     │
-    │                        │   STORE      │                                │
-    │                        │              │                                │
-    │                        │ FAISS_ID ──► │                                │
-    │                        │   DOC_ID     │                                │
-    │                        ╰──────────────╯                                │
-    │                              ▲                                         │
-    │                              │                                         │
-    │                        THE BRIDGE                                      │
-    │                                                                        │
-    └────────────────────────────────────────────────────────────────────────┘
+    User string ID  ──►  doc_id_alias table  ──►  int64 internal ID
+                                                        │
+                                         ┌──────────────┴──────────────┐
+                                         │                             │
+                                         ▼                             ▼
+                                   WiredTiger key               FAISS vector label
+                                   (document row)               (similarity index)
 ```
+
+This means a FAISS search hit is directly usable as a document table key — no secondary lookup needed. The old separate labels table (`table:label_docID`) is gone.
 
 ---
 
@@ -46,11 +40,12 @@ Then you need a bridge between the two abstractions.
     ║  WIREDTIGER + BSON                                               ║
     ╠══════════════════════════════════════════════════════════════════╣
     ║                                                                  ║
-    ║    ID (Key)  ──────────►  Document (BSON bytes)                  ║
+    ║    int64 key (big-endian)  ──────►  Document (BSON bytes)        ║
     ║                                                                  ║
     ║    ┌──────────┐           ┌─────────────────────────────────┐    ║
-    ║    │"doc-001" │ ────────► │ { content: "...",               │    ║
-    ║    └──────────┘           │   metadata: {                   │    ║
+    ║    │ \x00...1 │ ────────► │ { id: "doc-001",                │    ║
+    ║    └──────────┘           │   content: "...",               │    ║
+    ║                           │   metadata: {                   │    ║
     ║                           │     tags: ["ml", "python"],     │    ║
     ║                           │     author: { name: "jane" },   │    ║
     ║                           │     acls: ["admin", "reader"]   │    ║
@@ -58,18 +53,20 @@ Then you need a bridge between the two abstractions.
     ║                           │ }                               │    ║
     ║                           └─────────────────────────────────┘    ║
     ║                                                                  ║
-    ║    ✓ Nested objects in metadata                                  ║
-    ║    ✓ Array query filters                                         ║
+    ║  Keys are big-endian so WiredTiger's byte-lexicographic          ║
+    ║  ordering matches numeric ordering. Full-table scans work        ║
+    ║  correctly without a separate index.                             ║
     ║                                                                  ║
     ╚══════════════════════════════════════════════════════════════════╝
 ```
 
 BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you marshal arbitrary structs (representing objects) into 
-`[]byte`. We can store this in a Wiredtiger table.
+`[]byte`. We can store this in a WiredTiger table.
 
 ---
 
-### Pillar 2: Vector Search
+### Pillar 2: Vector Search & Storage
+Handled by the FAISS library.
 
 ```
     ╔══════════════════════════════════════════════════════════════════╗
@@ -83,10 +80,16 @@ BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you
     ║           │                    │                    │            ║
     ║           ▼                    ▼                    ▼            ║
     ║     ┌─────────────┐      ┌─────────────┐      ┌─────────────┐    ║
-    ║     │  • Flat     │      │ Auto-assigns│      │  Returns:   │    ║
-    ║     │  • HNSW     │      │   labels    │      │  (labels,   │    ║
-    ║     │  • IVF      │      │   1, 2, 3…  │      │  distances) │    ║
+    ║     │  • Flat     │      │ AddWithIds  │      │  Returns:   │    ║
+    ║     │  • HNSW     │      │  int64 IDs  │      │  (int64s,   │    ║
+    ║     │  • IVF      │      │  (stable)   │      │  distances) │    ║
     ║     └─────────────┘      └─────────────┘      └─────────────┘    ║
+    ║                                                                  ║
+    ║  The index is wrapped in an IndexIDMap so vectors are            ║
+    ║  stored under caller-assigned int64 IDs rather than             ║
+    ║  implicit sequential positions. This makes deletion safe:        ║
+    ║  RemoveIds([]int64{...}) removes exactly the right vectors       ║
+    ║  even after other documents have been deleted.                   ║
     ║                                                                  ║
     ╚══════════════════════════════════════════════════════════════════╝
 ```
@@ -106,9 +109,11 @@ BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you
     │  STEP 1                                                           │
     │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
-    │     FAISS.search(query, k=5)  ──────►  labels: [42, 17, 89, ...]  │
+    │     FAISS.search(query, k=5)  ──────►  ids: [42, 17, 89, ...]    │
     │                                        distances: [0.1, 0.2, ...] │
     │                                                                   │
+    │     These ids ARE the WiredTiger document keys.                   │
+    │     No intermediate lookup required.                              │
     └───────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -116,9 +121,9 @@ BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you
     │  STEP 2                                                           │
     │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
-    │     Labels Table:  42 ──────► "article-1"                         │
-    │                    17 ──────► "article-7"                         │
-    │                    89 ──────► "article-3"                         │
+    │     WiredTiger.get(encode(42))  ──────►  [BSON bytes]            │
+    │     WiredTiger.get(encode(17))  ──────►  [BSON bytes]            │
+    │     WiredTiger.get(encode(89))  ──────►  [BSON bytes]            │
     │                                                                   │
     └───────────────────────────────────────────────────────────────────┘
                                     │
@@ -127,20 +132,11 @@ BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you
     │  STEP 3                                                           │
     │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
     │                                                                   │
-    │     WiredTiger.get("article-1")  ──────►  [BSON bytes]            │
-    │                                                                   │
-    └───────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-    ┌───────────────────────────────────────────────────────────────────┐
-    │  STEP 4                                                           │
-    │  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━   │
-    │                                                                   │
     │     bson.Unmarshal(bytes)  ──────►  Document{                     │
-    │                                       ID: "article-1",            │
-    │                                       Content: "...",             │
-    │                                       Metadata: {...}             │
-    │                                     }                             │
+    │                                       ID: "doc-001",             │
+    │                                       Content: "...",            │
+    │                                       Metadata: {...}            │
+    │                                     }                            │
     │                                                                   │
     └───────────────────────────────────────────────────────────────────┘
                                     │
@@ -152,38 +148,13 @@ BSON (Binary-JSON) works well for this usecase. In Go, the bson library lets you
 
 ---
 
-### Hybrid Search
+### Key Tables (WiredTiger)
 
-In some RAG workflows, retrieving semantically similar chunks has a post filtering requirement. This is where structured metadata comes in:
+| Table | Key | Value | Purpose |
+|-------|-----|-------|---------|
+| `table:_catalog` | `db:<name>` or `<ns>` | BSON | Database and collection metadata |
+| `table:_stats` | `<ns>` | BSON | Doc count, index size, next internal ID |
+| `table:doc_id_alias` | user string ID | int64 string | Maps user IDs → internal IDs |
+| `table:collection-{name}-{db}` | int64 (big-endian) | BSON | Per-collection document storage |
 
-```
-    ┌─────────────────────────────────────────────────────────────────────┐
-    │                                                                     │
-    │     User Query: "Who are the highest performing engs on
-    |     Team Object storage"                                            │
-    │     User ACLs:  ["IT-managers", "Execs"]                            │
-    │                                                                     │
-    │                            ▼                                        │
-    │                                                                     │
-    │     ┌─────────────────────────────────────────────────────────┐     │
-    │     │  Vector Search         Metadata Filter                  │     │
-    │     │       │                      │                          │     │
-    │     │       ▼                      ▼                          │     │
-    │     │  ┌─────────┐           ┌──────────────────────┐         │     │
-    │     │  │ Top 100 │  ──────►  │ WHERE                │         │     │
-    │     │  │ similar │           │   acls $arrContains  │         │     │
-    │     │  │ chunks  │           │   ["managers"]       │         │     │
-    │     │  └─────────┘           └──────────────────────┘         │     │
-    │     │                               │                         │     │
-    │     │                               ▼                         │     │
-    │     │                        ┌─────────────┐                  │     │
-    │     │                        │  Top 10     │                  │     │
-    │     │                        │  PERMITTED  │                  │     │
-    │     │                        │  results    │                  │     │
-    │     │                        └─────────────┘                  │     │
-    │     └─────────────────────────────────────────────────────────┘     │
-    │                                                                     │
-    └─────────────────────────────────────────────────────────────────────┘
-```
-
----
+The alias table is the only place user-facing string IDs appear as keys. Everything else runs on int64s.

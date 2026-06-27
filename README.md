@@ -1,6 +1,5 @@
 # AchillesDB
-
-A performant single node vector database.
+A chromadb alternative (vector database) using FAISS & primitives from mongodb namely - Wiredtiger (via CGO) & BSON (Binary storage format for documents data)
 
 ## Quick Start
 
