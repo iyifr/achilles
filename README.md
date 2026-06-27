@@ -1,5 +1,9 @@
 # AchillesDB
-A chromadb alternative (vector database) using FAISS & primitives from mongodb namely - Wiredtiger (via CGO) & BSON (Binary storage format for documents data)
+A chromadb alternative for low volume vector databases.
+
+Built with primitives for document db land (MongoDB), namely:
+- Wiredtiger (via CGO)
+- BSON (Binary storage format for documents data)
 
 ## Quick Start
 
