@@ -16,7 +16,12 @@ func (s *nocgoService) IndexFactory(dimension int, description string, metric Me
 
 func indexIsTrained(idx *Index) (bool, error)         { return false, errNoCgo() }
 func indexAdd(idx *Index, xb []float32, nb int) error { return errNoCgo() }
-func indexNTotal(idx *Index) (int64, error)           { return 0, errNoCgo() }
+func indexAddWithIds(idx *Index, xb []float32, xids []int64, nb int) error {
+	return errNoCgo()
+}
+func indexRemoveIds(idx *Index, ids []int64) (int, error) { return 0, errNoCgo() }
+func wrapIDMap(idx *Index) error                          { return errNoCgo() }
+func indexNTotal(idx *Index) (int64, error)               { return 0, errNoCgo() }
 func indexSearch(idx *Index, xq []float32, nq int, k int) ([]float32, []int64, error) {
 	return nil, nil, errNoCgo()
 }

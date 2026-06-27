@@ -9,7 +9,7 @@ import (
 type CachedIndex struct {
 	Index    *Index
 	Path     string
-	Dirty    bool      // Modified since last write to disk
+	Dirty    bool // Modified since last write to disk
 	LastUsed time.Time
 	mu       sync.Mutex
 }
@@ -26,10 +26,10 @@ func (c *CachedIndex) Unlock() {
 
 // IndexCache provides thread-safe caching for FAISS indexes.
 type IndexCache struct {
-	indexes  map[string]*CachedIndex // path -> cached index
-	mu       sync.RWMutex
-	maxSize  int           // Maximum number of indexes to cache
-	service  FAISSService  // For creating new indexes
+	indexes map[string]*CachedIndex // path -> cached index
+	mu      sync.RWMutex
+	maxSize int          // Maximum number of indexes to cache
+	service FAISSService // For creating new indexes
 }
 
 // Global index cache singleton
@@ -76,12 +76,20 @@ func (c *IndexCache) GetOrCreate(path string, dimension int) (*CachedIndex, erro
 		return cached, nil
 	}
 
-	// Try to load from disk
+	// Try to load from disk. Indexes are always persisted already wrapped
+	// in IndexIDMap (see below), so a loaded index supports AddWithIds/
+	// RemoveIds without further wrapping.
 	idx, err := c.service.ReadIndex(path)
 	if err != nil {
-		// Create new index
+		// Create new index, wrapped in IndexIDMap so callers can use
+		// AddWithIds/RemoveIds with stable, caller-assigned ids instead of
+		// implicit sequential positions (required for correct delete/upsert).
 		idx, err = c.service.IndexFactory(dimension, "Flat", MetricL2)
 		if err != nil {
+			return nil, err
+		}
+		if err := idx.WrapIDMap(); err != nil {
+			idx.Free()
 			return nil, err
 		}
 	}

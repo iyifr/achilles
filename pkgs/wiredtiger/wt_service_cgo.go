@@ -88,7 +88,7 @@ int wt_table_exists(WT_CONNECTION *conn, const char* uri, int *exists) {
 	if (err == 0) {
 		*exists = 1;
 		cursor->close(cursor);
-	} else if (err == 2) {
+	} else if (err == WT_NOTFOUND || err == ENOENT) {
 		*exists = 0;
 		err = 0;
 	}

@@ -45,6 +45,17 @@ func (idx *Index) IsTrained() (bool, error) { return indexIsTrained(idx) }
 // Add inserts nb vectors (xb length must be nb*dimension).
 func (idx *Index) Add(xb []float32, nb int) error { return indexAdd(idx, xb, nb) }
 
+// Index must be wrapped with IndexIDMap.
+func (idx *Index) AddWithIds(xb []float32, xids []int64, nb int) error {
+	return indexAddWithIds(idx, xb, xids, nb)
+}
+
+// RemoveIds removes every vector whose id is in ids
+func (idx *Index) RemoveIds(ids []int64) (int, error) { return indexRemoveIds(idx, ids) }
+
+// WrapIDMap wraps the index in an IndexIDMap, to support custom ID's
+func (idx *Index) WrapIDMap() error { return wrapIDMap(idx) }
+
 // NTotal returns the number of vectors in the index.
 func (idx *Index) NTotal() (int64, error) { return indexNTotal(idx) }
 
@@ -62,17 +73,4 @@ func (idx *Index) Free() { indexFree(idx) }
 // Train trains the index on the given vectors.
 func (idx *Index) Train(x []float32, n int) error {
 	return trainIndex(idx, x, n)
-}
-
-// Simple sqrt fallback for generic version
-func Sqrt64(x float64) float64 {
-	// Use Newton's method
-	if x == 0 {
-		return 0
-	}
-	z := x
-	for i := 0; i < 10; i++ {
-		z = z - (z*z-x)/(2*z)
-	}
-	return z
 }

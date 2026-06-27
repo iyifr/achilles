@@ -21,13 +21,15 @@ const (
 
 // Sentinel errors for common scenarios
 var (
-	ErrEmptyName          = errors.New("name cannot be empty")
-	ErrEmptyDocuments     = errors.New("documents slice cannot be empty")
-	ErrDatabaseNotFound   = errors.New("database not found")
-	ErrCollectionNotFound = errors.New("collection not found")
-	ErrDatabaseExists     = errors.New("database already exists")
-	ErrCollectionExists   = errors.New("collection already exists")
-	ErrDocumentNotFound   = errors.New("document not found")
+	ErrEmptyName            = errors.New("name cannot be empty")
+	ErrEmptyDocuments       = errors.New("documents slice cannot be empty")
+	ErrDatabaseNotFound     = errors.New("database not found")
+	ErrCollectionNotFound   = errors.New("collection not found")
+	ErrDatabaseExists       = errors.New("database already exists")
+	ErrCollectionExists     = errors.New("collection already exists")
+	ErrDocumentNotFound     = errors.New("document not found")
+	ErrDuplicateDocumentIds = errors.New("ids array contains duplicates")
+	ErrDocumentExists       = errors.New("document already exists")
 )
 
 // DBError represents a database operation error

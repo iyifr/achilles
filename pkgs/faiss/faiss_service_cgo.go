@@ -16,14 +16,15 @@ package faiss
 #include <faiss/c_api/error_c.h>
 #include <faiss/c_api/utils/utils_c.h>
 #include <faiss/c_api/utils/distances_c.h>
-// Add C declaration:
+#include <faiss/c_api/MetaIndexes_c.h>
+#include <faiss/c_api/impl/AuxIndexStructures_c.h>
+//
 // int faiss_Index_train(FaissIndex*, idx_t n, const float *x);
 // FaissIndex *faiss_read_index_fname(const char* fname, int io_flags);
 
 // Provide a local version string to avoid relying on optional API symbols
 static const char* gs_faiss_version_str() { return "faiss-c-api"; }
 
-// helpers to adapt types across cgo boundary (kept for future use)
 static inline int metric_to_c(int m) { return m; }
 */
 import "C"
@@ -88,6 +89,88 @@ func indexAdd(idx *Index, xb []float32, nb int) error {
 		}
 		return fmt.Errorf("faiss_Index_add rc=%d", int(rc))
 	}
+	return nil
+}
+
+func indexAddWithIds(idx *Index, xb []float32, xids []int64, nb int) error {
+	impl, ok := idx._impl.(*indexImpl)
+	if !ok || impl.ptr == nil {
+		return fmt.Errorf("nil index")
+	}
+	if nb <= 0 {
+		return nil
+	}
+	if len(xb) == 0 {
+		return fmt.Errorf("xb empty")
+	}
+	if len(xids) != nb {
+		return fmt.Errorf("xids length (%d) must equal nb (%d)", len(xids), nb)
+	}
+	if rc := C.faiss_Index_add_with_ids(impl.ptr, C.idx_t(nb), (*C.float)(&xb[0]), (*C.idx_t)(&xids[0])); rc != 0 {
+		perr := C.faiss_get_last_error()
+		if perr != nil {
+			return fmt.Errorf("%s", C.GoString(perr))
+		}
+		return fmt.Errorf("faiss_Index_add_with_ids rc=%d", int(rc))
+	}
+	return nil
+}
+
+// indexRemoveIds removes every vector whose id is in ids, in a single
+// native call (one IDSelectorBatch covers the whole set), and returns
+// the number actually removed.
+func indexRemoveIds(idx *Index, ids []int64) (int, error) {
+	impl, ok := idx._impl.(*indexImpl)
+	if !ok || impl.ptr == nil {
+		return 0, fmt.Errorf("nil index")
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	var sel *C.FaissIDSelectorBatch
+	if rc := C.faiss_IDSelectorBatch_new(&sel, C.size_t(len(ids)), (*C.idx_t)(&ids[0])); rc != 0 {
+		perr := C.faiss_get_last_error()
+		if perr != nil {
+			return 0, fmt.Errorf("%s", C.GoString(perr))
+		}
+		return 0, fmt.Errorf("faiss_IDSelectorBatch_new rc=%d", int(rc))
+	}
+	// IDSelectorBatch is-a IDSelector; the C API exposes no dedicated
+	// destructor for it, so it must be freed via the base type.
+	selBase := (*C.FaissIDSelector)(unsafe.Pointer(sel))
+	defer C.faiss_IDSelector_free(selBase)
+
+	var nRemoved C.size_t
+	if rc := C.faiss_Index_remove_ids(impl.ptr, selBase, &nRemoved); rc != 0 {
+		perr := C.faiss_get_last_error()
+		if perr != nil {
+			return 0, fmt.Errorf("%s", C.GoString(perr))
+		}
+		return 0, fmt.Errorf("faiss_Index_remove_ids rc=%d", int(rc))
+	}
+	return int(nRemoved), nil
+}
+
+// wrapIDMap wraps idx's underlying index in an IndexIDMap, in place, so it
+// supports AddWithIds/RemoveIds with stable caller-assigned ids instead of
+// implicit sequential positions. own_fields is set so the wrapper also owns
+// (and frees) the sub-index it wraps.
+func wrapIDMap(idx *Index) error {
+	impl, ok := idx._impl.(*indexImpl)
+	if !ok || impl.ptr == nil {
+		return fmt.Errorf("nil index")
+	}
+	var idmap *C.FaissIndexIDMap
+	if rc := C.faiss_IndexIDMap_new(&idmap, impl.ptr); rc != 0 {
+		perr := C.faiss_get_last_error()
+		if perr != nil {
+			return fmt.Errorf("%s", C.GoString(perr))
+		}
+		return fmt.Errorf("faiss_IndexIDMap_new rc=%d", int(rc))
+	}
+	C.faiss_IndexIDMap_set_own_fields(idmap, 1)
+	impl.ptr = (*C.FaissIndex)(unsafe.Pointer(idmap))
 	return nil
 }
 

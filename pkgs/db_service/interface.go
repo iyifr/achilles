@@ -11,7 +11,7 @@ import (
 // TABLE URIS for creating wiredtiger tables
 var CATALOG = "table:_catalog"
 var STATS = "table:_stats"
-var LABELS_TO_DOC_ID_MAPPING_TABLE_URI = "table:label_docID"
+var DOC_ID_ALIAS_TABLE_URI = "table:doc_id_alias"
 
 // GetVectorsFilePath returns the vectors directory path, configurable via VECTORS_HOME env var
 func GetVectorsFilePath() string {
@@ -22,27 +22,32 @@ func GetVectorsFilePath() string {
 }
 
 type GlowstickDocument struct {
-	Id        string                 `bson:"_id" json:"id"`
-	Content   string                 `bson:"content" json:"content"`
-	Embedding []float32              `bson:"embedding" json:"-"`
-	Metadata  map[string]interface{} `bson:"metadata" json:"metadata"`
+	Id        string         `bson:"_id" json:"id"`
+	Content   string         `bson:"content" json:"content"`
+	Embedding []float32      `bson:"embedding" json:"-"`
+	Metadata  map[string]any `bson:"metadata" json:"metadata"`
 }
 type GlowstickQueryResultSet struct {
-	Id        string                 `bson:"_id" json:"id"`
-	Content   string                 `bson:"content" json:"content"`
-	Embedding []float32              `bson:"embedding" json:"-"`
-	Metadata  map[string]interface{} `bson:"metadata" json:"metadata"`
-	Distance  float32                `bson:"distance" json:"distance"`
+	Id        string         `bson:"_id" json:"id"`
+	Content   string         `bson:"content" json:"content"`
+	Embedding []float32      `bson:"embedding" json:"-"`
+	Metadata  map[string]any `bson:"metadata" json:"metadata"`
+	Distance  float32        `bson:"distance" json:"distance"`
 }
 
 // GlowstickDocumentSOA represents documents in ChromaDB compatible SOA (Struct of Arrays) format.
 // This format is more efficient for batch operations as embeddings are already in the flat
 // layout required by FAISS, avoiding per-document copy operations.
 type GlowstickDocumentSOA struct {
-	Ids        []string                 `json:"ids" bson:"ids"`
-	Contents   []string                 `json:"contents" bson:"contents"`
-	Embeddings []float32                `json:"embeddings" bson:"embeddings"` // Flat array: [doc1_emb..., doc2_emb..., ...]
-	Metadatas  []map[string]interface{} `json:"metadatas" bson:"metadatas"`
+	Ids        []string         `json:"ids" bson:"ids"`
+	Contents   []string         `json:"contents" bson:"contents"`
+	Embeddings []float32        `json:"embeddings" bson:"embeddings"` // Flat array: [doc1_emb..., doc2_emb..., ...]
+	Metadatas  []map[string]any `json:"metadatas" bson:"metadatas"`
+	// Upsert controls behavior when an id in this batch already exists in
+	// the collection. Defaults to false (reject with AlreadyExists_Err).
+	// When true, the existing document's content/metadata/embedding are
+	// replaced in place.
+	Upsert bool `json:"upsert" bson:"upsert"`
 }
 
 // Validate checks that all arrays have consistent lengths and embeddings dimension is valid.
@@ -77,6 +82,23 @@ func (soa *GlowstickDocumentSOA) Validate() error {
 	}
 
 	return nil
+}
+
+// FindDuplicateIds returns every id that appears more than once in the batch,
+// in a single O(n) pass. Returns nil if there are no duplicates.
+func (soa *GlowstickDocumentSOA) FindDuplicateIds() []string {
+	counts := make(map[string]int, len(soa.Ids))
+	for _, id := range soa.Ids {
+		counts[id]++
+	}
+
+	var dupes []string
+	for id, count := range counts {
+		if count > 1 {
+			dupes = append(dupes, id)
+		}
+	}
+	return dupes
 }
 
 // EmbeddingDimension returns the dimension of each embedding vector.
@@ -139,14 +161,15 @@ type DatabaseInfo struct {
 	Empty           bool   `json:"empty"`
 }
 
-type ListDatabasesResponse struct {
+// Payload type for fetching all databases and related data
+type GetDBsPayload struct {
 	Databases []DatabaseInfo `json:"databases"`
 }
 
 type DBService interface {
 	CreateDB() error
 	DeleteDB(name string) error
-	ListDatabases() (ListDatabasesResponse, error)
+	GetDbs() (GetDBsPayload, error)
 	ListCollections() ([]CollectionCatalogEntry, error)
 	CreateCollection(collection_name string) error
 	DeleteCollection(collection_name string) error
@@ -155,8 +178,6 @@ type DBService interface {
 	GetDocuments(collection_name string) ([]GlowstickDocument, error)
 	DeleteDocuments(collection_name string, documentIds []string) ([]string, error)
 	QueryCollection(collection_name string, query QueryStruct) ([]GlowstickQueryResultSet, error)
-	// UpdateDocuments updates metadata for one document (by DocumentId) or many (by Where).
-	// Returns the number of documents updated.
 	UpdateDocuments(collection_name string, payload *DocUpdatePayload) (int, error)
 }
 

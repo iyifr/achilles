@@ -146,7 +146,7 @@ func ListDatabasesHandler(ctx *fasthttp.RequestCtx) {
 		Logger:    log,
 	})
 
-	result, err := db.ListDatabases()
+	result, err := db.GetDbs()
 	if err != nil {
 		handleError(ctx, err)
 		return
@@ -260,6 +260,7 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		Documents  []string                 `json:"documents"`  // Maps to Contents
 		Embeddings [][]float32              `json:"embeddings"` // Array of arrays
 		Metadatas  []map[string]interface{} `json:"metadatas"`
+		Upsert     bool                     `json:"upsert"` // If true, ids that already exist are replaced instead of rejected
 	}
 
 	if err := json.Unmarshal(ctx.Request.Body(), &soaRequest); err != nil {
@@ -328,6 +329,7 @@ func InsertDocumentsHndlr(ctx *fasthttp.RequestCtx) {
 		Contents:   soaRequest.Documents,
 		Embeddings: flatEmbeddings,
 		Metadatas:  soaRequest.Metadatas,
+		Upsert:     soaRequest.Upsert,
 	}
 
 	db := dbservice.DatabaseService(dbservice.DbParams{
